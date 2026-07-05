@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import chat, health, sessions
 from app.core.config import get_settings
-from app.core.exceptions import register_exception_handlers
+from app.core.exceptions import DependencyUnavailableError, register_exception_handlers
 from app.core.logging_config import configure_logging
 from app.infrastructure.db.bootstrap import create_tables_if_not_exists
 from app.infrastructure.db.mysql_pool import MySQLPool
@@ -79,10 +79,12 @@ async def _lifespan(app: FastAPI):
     logger.info("Thread pool executor initialized with %s workers", settings.max_workers)
 
     mysql_pool = MySQLPool(settings)
-    mysql_pool.init()
-
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(executor, create_tables_if_not_exists, mysql_pool)
+    try:
+        mysql_pool.init()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(executor, create_tables_if_not_exists, mysql_pool)
+    except DependencyUnavailableError:
+        logger.warning("MySQL is unavailable during startup; continuing without database initialization")
 
     session_repo = SessionRepository(mysql_pool)
     token_repo = TokenRepository(mysql_pool)

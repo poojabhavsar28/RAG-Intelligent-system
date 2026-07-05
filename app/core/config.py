@@ -18,7 +18,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
 
     # --- App ---
     app_name: str = "RAG Chatbot API"
@@ -33,12 +38,12 @@ class Settings(BaseSettings):
     cors_allowed_origins: List[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
     # --- MySQL ---
-    mysql_host: str = "localhost"
-    mysql_port: int = 3306
-    mysql_user: str
-    mysql_password: str
-    mysql_db: str
-    mysql_pool_size: int = 10
+    mysql_host: str = Field(default="localhost")
+    mysql_port: int = Field(default=3306)
+    mysql_user: str = Field(default="root")
+    mysql_password: str = Field(default="password")
+    mysql_db: str = Field(default="rag_chatbot")
+    mysql_pool_size: int = Field(default=10)
 
     # --- Vector store ---
     chroma_db_base_dir: str = "./chroma_db_base"
