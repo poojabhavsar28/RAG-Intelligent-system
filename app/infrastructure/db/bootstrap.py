@@ -12,7 +12,14 @@ def create_tables_if_not_exists(pool: MySQLPool) -> None:
     """Applies schema.sql. Fine for a portfolio project; Phase 2 replaces
     this with Alembic migrations so schema changes are versioned and
     reversible instead of being idempotent-CREATE-only."""
-    statements = [s.strip() for s in _SCHEMA_PATH.read_text().split(";") if s.strip() and not s.strip().startswith("--")]
+    sql_text = _SCHEMA_PATH.read_text()
+    statements = []
+    for raw_statement in sql_text.split(";"):
+        statement = raw_statement.strip()
+        if not statement or statement.startswith("--"):
+            continue
+        statements.append(statement)
+
     with pool.connection() as conn:
         cursor = conn.cursor()
         try:

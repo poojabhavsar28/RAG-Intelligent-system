@@ -7,15 +7,31 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Union, List, Dict, Any, Optional
 from rapidfuzz import fuzz
-from langchain_ollama import OllamaEmbeddings
-from langchain_chroma import Chroma
-from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts import PromptTemplate
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_huggingface import HuggingFacePipeline
-from langchain.memory import ConversationBufferMemory
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+try:
+    from langchain_ollama import OllamaEmbeddings
+    from langchain_chroma import Chroma
+    from langchain.chains import ConversationalRetrievalChain
+    from langchain.prompts import PromptTemplate
+    from langchain_community.chat_message_histories import ChatMessageHistory
+    from langchain_core.runnables.history import RunnableWithMessageHistory
+    from langchain_huggingface import HuggingFacePipeline
+    from langchain.memory import ConversationBufferMemory
+except ImportError:
+    OllamaEmbeddings = None
+    Chroma = None
+    ConversationalRetrievalChain = None
+    PromptTemplate = None
+    ChatMessageHistory = None
+    RunnableWithMessageHistory = None
+    HuggingFacePipeline = None
+    ConversationBufferMemory = None
+
+try:
+    from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+except ImportError:
+    pipeline = None
+    AutoModelForCausalLM = None
+    AutoTokenizer = None
 import mysql.connector
 from mysql.connector import pooling, Error
 from dotenv import load_dotenv
@@ -61,8 +77,9 @@ class AIAssistant:
             self._init_db_pool()
 
             # Prompts
-            self.PROMPT_EN = PromptTemplate(
-                template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+            if PromptTemplate is not None:
+                self.PROMPT_EN = PromptTemplate(
+                    template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 You are a knowledgeable AI assistant. For greetings like hello/hi, respond warmly. Use provided context and retrieved sources to answer the question.
 If the context does not contain the answer, you MUST say "I don't have this information in my knowledge base."
 
@@ -71,10 +88,10 @@ Context: {context}
 Question: {question}<|eot_id|>
 <|start_header_id|>assistant<|end_header_id|>
 """,
-                input_variables=["context", "question"]
-            )
-            self.PROMPT_HI = PromptTemplate(
-                template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+                    input_variables=["context", "question"]
+                )
+                self.PROMPT_HI = PromptTemplate(
+                    template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 आप एक ज्ञानवान AI सहायक हैं। अभिवादन के लिए सौहार्दपूर्ण उत्तर दें। प्रश्न का उत्तर देने के लिए प्रदान किए गए संदर्भ का उपयोग करें।
 यदि संदर्भ में उत्तर नहीं है, तो आपको अवश्य कहना चाहिए "मेरे ज्ञान आधार में यह जानकारी नहीं है।"
 
@@ -83,8 +100,11 @@ Question: {question}<|eot_id|>
 प्रश्न: {question}<|eot_id|>
 <|start_header_id|>assistant<|end_header_id|>
 """,
-                input_variables=["context", "question"]
-            )
+                    input_variables=["context", "question"]
+                )
+            else:
+                self.PROMPT_EN = None
+                self.PROMPT_HI = None
 
             # Ensure tables exist
             self.init_mysql_db()
@@ -212,6 +232,10 @@ Question: {question}<|eot_id|>
         logger.info("Initializing quantized Llama-3.2-3B model...")
 
         try:
+            if OllamaEmbeddings is None or pipeline is None or AutoTokenizer is None or AutoModelForCausalLM is None or HuggingFacePipeline is None:
+                logger.warning("Optional AI model dependencies are unavailable; skipping model initialization")
+                return
+
             # Clear GPU cache
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
