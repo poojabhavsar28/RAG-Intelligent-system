@@ -24,7 +24,11 @@ async def health_check(request: Request):
     ai_assistant = getattr(request.app.state, "ai_assistant", None)
     ai_status = "ok" if ai_assistant and getattr(ai_assistant, "initialized_global_models_flag", False) else "initializing"
 
-    if database_status != "ok":
-        raise DependencyUnavailableError("Service unhealthy", error_code="SERVICE_UNHEALTHY")
+    if database_status == "ok" and ai_status == "ok":
+        status = "healthy"
+    elif database_status == "ok":
+        status = "degraded"
+    else:
+        status = "degraded"
 
-    return HealthResponse(status="healthy", database=database_status, ai_assistant=ai_status)
+    return HealthResponse(status=status, database=database_status, ai_assistant=ai_status)

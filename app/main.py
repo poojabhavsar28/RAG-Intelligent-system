@@ -91,10 +91,14 @@ async def _lifespan(app: FastAPI):
     chat_repo = ChatRepository(mysql_pool)
 
     # --- AI assistant (not yet migrated — see module docstring) ---
-    from ai_assistant import AIAssistant  # local import: legacy module, migrates in the LLM-layer phase
+    ai_assistant = None
+    try:
+        from ai_assistant import AIAssistant  # local import: legacy module, migrates in the LLM-layer phase
 
-    ai_assistant = AIAssistant(chroma_db_base_dir=settings.chroma_db_base_dir, executor=executor)
-    asyncio.create_task(_initialize_ai_assistant(ai_assistant))
+        ai_assistant = AIAssistant(chroma_db_base_dir=settings.chroma_db_base_dir, executor=executor)
+        asyncio.create_task(_initialize_ai_assistant(ai_assistant))
+    except Exception:
+        logger.exception("Failed to initialize AI assistant; continuing without it")
 
     session_service = SessionService(
         session_repo, token_repo, settings.session_token_ttl_hours, settings.customer_token_ttl_days
