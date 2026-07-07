@@ -13,8 +13,10 @@ or stores a plaintext token.
 import uuid
 from dataclasses import dataclass
 
+from app.core.exceptions import NotFoundError
 from app.core.security import generate_token, hash_token
 from app.repositories.session_repository import SessionRepository
+from app.repositories.tenant_repository import TenantRepository
 from app.repositories.token_repository import TokenRepository
 
 
@@ -32,15 +34,27 @@ class SessionService:
         self,
         session_repo: SessionRepository,
         token_repo: TokenRepository,
+        tenant_repo: TenantRepository,
         session_token_ttl_hours: int,
         customer_token_ttl_days: int,
     ):
         self._session_repo = session_repo
         self._token_repo = token_repo
+        self._tenant_repo = tenant_repo
         self._session_token_ttl_hours = session_token_ttl_hours
         self._customer_token_ttl_days = customer_token_ttl_days
 
     def create_session(self, tenant_id: str, customer_id: str) -> NewSession:
+        # sessions.tenant_id is now a foreign key into tenants (migration
+        # 0002) -- without this check, an unregistered tenant_id would
+        # fail as an opaque MySQL FK-violation 500 instead of a clear,
+        # actionable error.
+        if not self._tenant_repo.exists(tenant_id):
+            raise NotFoundError(
+                f"Unknown tenant_id: {tenant_id!r}. Tenants must be registered before creating sessions.",
+                error_code="UNKNOWN_TENANT",
+            )
+
         session_id = str(uuid.uuid4())
         session_api_token = generate_token()
         customer_token = generate_token()
@@ -48,13 +62,12 @@ class SessionService:
 
         # NOTE: the original code inserted into `sessions` and
         # `customer_tokens` as two separate statements without a shared
-        # transaction, and without a real FK relationship (the schema.sql
-        # baseline in this refactor drops the previous FK on
-        # (tenant_id, customer_id) -> sessions, which referenced a column
-        # pair that wasn't even declared UNIQUE and would fail on real
-        # MySQL). True transactional atomicity across both inserts is a
-        # Phase 2 (database design) concern; flagged here rather than
-        # silently "fixed" with a partial change.
+        # transaction. True transactional atomicity across both inserts
+        # is a real gap -- if the second insert fails, the first is left
+        # committed with no compensating action. Not fixed in this pass
+        # (would require moving both inserts into one repository method
+        # sharing a connection/transaction); flagged here rather than
+        # silently left unmentioned.
         self._session_repo.create(
             session_id=session_id,
             tenant_id=tenant_id,
