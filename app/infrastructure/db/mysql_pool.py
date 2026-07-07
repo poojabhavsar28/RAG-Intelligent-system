@@ -49,6 +49,16 @@ class MySQLPool:
             except Exception as e:  # pragma: no cover - best-effort cleanup
                 logger.warning(f"Error during pool shutdown: {e}")
 
+    @property
+    def raw_pool(self) -> pooling.MySQLConnectionPool:
+        """Exposes the underlying mysql.connector pool so it can be injected
+        into code that expects a raw pool directly (e.g. the legacy
+        AIAssistant class) instead of that code creating its own second
+        pool against the same database."""
+        if not self._pool:
+            raise DependencyUnavailableError("Database connection pool not initialized", error_code="DB_POOL_NOT_INIT")
+        return self._pool
+
     @contextmanager
     def connection(self):
         """Context manager so callers can't forget to close a connection
