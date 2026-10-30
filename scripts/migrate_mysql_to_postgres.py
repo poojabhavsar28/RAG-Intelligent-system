@@ -54,6 +54,10 @@ def _utc(value: datetime | None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _utc_nullable(value: datetime | None) -> datetime | None:
+    return _utc(value) if value is not None else None
+
+
 def _batches(cursor, batch_size: int = BATCH_SIZE) -> Iterable[list[dict[str, Any]]]:
     while True:
         rows = cursor.fetchmany(batch_size)
@@ -130,7 +134,7 @@ def migrate() -> dict[str, int]:
                     "token_hash": row["api_token_hash"],
                     "language": row.get("language") or "en",
                     "created_at": _utc(row.get("created_at")),
-                    "expires_at": row.get("expires_at"),
+                    "expires_at": _utc_nullable(row.get("expires_at")),
                 } for row in batch]
                 with pg_engine.begin() as pg:
                     pg.execute(text("""
