@@ -17,7 +17,7 @@ def upgrade() -> None:
 
     op.execute("""
         CREATE TABLE tenants (
-            tenant_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active', 'suspended', 'deleting')),
@@ -29,7 +29,7 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE app_users (
             user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
             external_subject TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (tenant_id, external_subject),
@@ -40,7 +40,7 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE sessions (
             session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
             user_id UUID,
             customer_id TEXT NOT NULL,
             token_hash TEXT NOT NULL UNIQUE,
@@ -58,7 +58,7 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE customer_tokens (
             token_hash TEXT PRIMARY KEY,
-            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
             customer_id TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             expires_at TIMESTAMPTZ
@@ -70,7 +70,7 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE chat_history (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
             session_id UUID NOT NULL,
             role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
             message TEXT NOT NULL,
@@ -85,7 +85,7 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE qa_templates (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
             language TEXT NOT NULL,
             question TEXT NOT NULL,
             answer TEXT NOT NULL,
@@ -97,7 +97,7 @@ def upgrade() -> None:
 
     op.execute("""
         CREATE TABLE documents (
-            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
             document_id UUID NOT NULL DEFAULT gen_random_uuid(),
             external_id TEXT,
             title TEXT NOT NULL,
@@ -123,7 +123,7 @@ def upgrade() -> None:
     # so a model change requires a deliberate migration, not silent mixing.
     op.execute("""
         CREATE TABLE document_chunks (
-            tenant_id UUID NOT NULL,
+            tenant_id TEXT NOT NULL,
             chunk_id UUID NOT NULL DEFAULT gen_random_uuid(),
             document_id UUID NOT NULL,
             ordinal INTEGER NOT NULL,
@@ -148,7 +148,7 @@ def upgrade() -> None:
 
     op.execute("""
         CREATE TABLE document_acl (
-            tenant_id UUID NOT NULL,
+            tenant_id TEXT NOT NULL,
             document_id UUID NOT NULL,
             principal_type TEXT NOT NULL CHECK (principal_type IN ('user', 'group', 'role')),
             principal_id TEXT NOT NULL,
@@ -171,8 +171,8 @@ def upgrade() -> None:
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
         op.execute(
             f"CREATE POLICY tenant_isolation_{table} ON {table} "
-            "USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) "
-            "WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)"
+            "USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')) "
+            "WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), ''))"
         )
 
 
