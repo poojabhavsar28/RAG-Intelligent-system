@@ -13,9 +13,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-db_url = os.environ.get("POSTGRES_DATABASE_URL")
+# Use a privileged migration URL when provided; the runtime app URL should
+# belong to a non-superuser role without BYPASSRLS.
+db_url = os.environ.get("POSTGRES_ADMIN_DATABASE_URL") or os.environ.get("POSTGRES_DATABASE_URL")
 if not db_url:
-    raise RuntimeError("POSTGRES_DATABASE_URL is required for PostgreSQL migrations")
+    raise RuntimeError("POSTGRES_ADMIN_DATABASE_URL (or POSTGRES_DATABASE_URL) is required for PostgreSQL migrations")
 db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
