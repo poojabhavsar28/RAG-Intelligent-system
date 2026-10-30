@@ -148,7 +148,15 @@ class PostgresSessionRepository:
                 """),
                 {"tenant_id": tenant_id, "session_id": session_id},
             ).mappings().first()
-            return SessionRecord(**dict(row)) if row else None
+            return (
+                SessionRecord(
+                    session_id=str(row["session_id"]),
+                    tenant_id=row["tenant_id"],
+                    customer_id=row["customer_id"],
+                    language=row["language"],
+                )
+                if row else None
+            )
 
 
 class PostgresTokenRepository:
