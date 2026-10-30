@@ -66,9 +66,13 @@ The application database role must not be a superuser and must not have
 - Document and chunk tables use 16-way hash partitioning on `tenant_id`.
   This bounds partition count while distributing tenants; it is not one
   physical partition per tenant.
-- RLS enforces tenant boundary. Document ACL checks remain an additional
-  authorization filter and must be applied by the retrieval query.
+- RLS enforces tenant boundary. The initial `PgVectorRetriever` also filters
+  active documents by language and applies user, group, and role ACL checks
+  before returning chunks. ACL enforcement is on by default.
 - HNSW cosine index is the initial approximate-nearest-neighbor baseline.
+- The current retriever accepts 768-dimensional query embeddings only; a
+  model/dimension change must be accompanied by a schema migration and
+  re-embedding rather than mixing vector spaces.
 
 ## Current migration boundary
 
@@ -94,7 +98,8 @@ host/domain mapping). Otherwise a caller could request session creation for
 a tenant by guessing its identifier. Session and customer-token creation
 also still need a single atomic transaction at the service boundary.
 
-GitHub Actions has successfully applied both PostgreSQL migrations and run
-the tenant-ID unit tests and PostgreSQL-module compilation. This validates
-schema creation and basic helper behavior; it is not yet an end-to-end API
-integration test or a production performance benchmark.
+GitHub Actions has successfully applied both PostgreSQL migrations,
+compiled the PostgreSQL modules, passed tenant-ID and pgvector contract
+tests, and exercised tenant RLS using a non-superuser runtime role. This
+validates the schema and isolation foundation; it is not yet an end-to-end
+FastAPI integration test or a production performance benchmark.
