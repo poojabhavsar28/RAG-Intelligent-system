@@ -99,10 +99,9 @@ class PostgresSessionRepository:
             )
             conn.execute(
                 text("""
-                    INSERT INTO auth_token_lookup
-                        (token_hash, token_type, tenant_id, subject_id, session_id, expires_at)
-                    VALUES
-                        (:token_hash, 'session', :tenant_id, :subject_id, :session_id, :expires_at)
+                    SELECT public.register_auth_token(
+                        :token_hash, 'session', :tenant_id, :subject_id, :session_id, :expires_at
+                    )
                 """),
                 {
                     "token_hash": api_token_hash,
@@ -157,20 +156,29 @@ class PostgresSessionRepository:
             )
             conn.execute(
                 text("""
-                    INSERT INTO auth_token_lookup
-                        (token_hash, token_type, tenant_id, subject_id, session_id, expires_at)
-                    VALUES
-                        (:session_hash, 'session', :tenant_id, :customer_id, :session_id, :session_expiry),
-                        (:customer_hash, 'customer', :tenant_id, :customer_id, NULL, :customer_expiry)
+                    SELECT public.register_auth_token(
+                        :token_hash, 'session', :tenant_id, :subject_id, :session_id, :expires_at
+                    )
                 """),
                 {
-                    "session_hash": session_token_hash,
-                    "customer_hash": customer_token_hash,
+                    "token_hash": session_token_hash,
                     "tenant_id": tenant_id,
-                    "customer_id": str(customer_id),
+                    "subject_id": str(customer_id),
                     "session_id": sid,
-                    "session_expiry": session_expiry,
-                    "customer_expiry": customer_expiry,
+                    "expires_at": session_expiry,
+                },
+            )
+            conn.execute(
+                text("""
+                    SELECT public.register_auth_token(
+                        :token_hash, 'customer', :tenant_id, :subject_id, NULL, :expires_at
+                    )
+                """),
+                {
+                    "token_hash": customer_token_hash,
+                    "tenant_id": tenant_id,
+                    "subject_id": str(customer_id),
+                    "expires_at": customer_expiry,
                 },
             )
 
@@ -245,9 +253,9 @@ class PostgresTokenRepository:
             )
             conn.execute(
                 text("""
-                    INSERT INTO auth_token_lookup
-                        (token_hash, token_type, tenant_id, subject_id, expires_at)
-                    VALUES (:token_hash, 'customer', :tenant_id, :subject_id, :expires_at)
+                    SELECT public.register_auth_token(
+                        :token_hash, 'customer', :tenant_id, :subject_id, NULL, :expires_at
+                    )
                 """),
                 {
                     "token_hash": token_hash,
