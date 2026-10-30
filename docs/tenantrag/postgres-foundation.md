@@ -4,9 +4,11 @@
 
 This branch now contains a **separate PostgreSQL migration history**, a
 transaction helper for setting PostgreSQL row-level-security (RLS) context,
-a hash-only authentication bootstrap index, and initial PostgreSQL repository
-adapters. The existing MySQL runtime and MySQL Alembic history are intentionally
-left untouched while authentication and service wiring are completed.
+a hash-only authentication bootstrap index, PostgreSQL repository adapters,
+an ACL-aware pgvector retriever, migration utilities, and an opt-in PostgreSQL
+application backend. MySQL remains the default backend for backward
+compatibility; the PostgreSQL backend is selected explicitly after data
+migration and tenant API-key provisioning.
 
 ## Start PostgreSQL
 
@@ -18,11 +20,14 @@ $env:POSTGRES_PASSWORD = "replace-with-a-local-secret"
 docker compose -f docker-compose.postgres.yml up -d
 ```
 
-Set the application migration URL (URL-encode special characters in passwords):
+Use separate credentials for schema changes and application traffic.
+The compose bootstrap user (`tenantrag_app`) is the privileged migration
+identity; the application must use a non-superuser role without `BYPASSRLS`.
+URL-encode special characters in passwords.
 
 ```bash
-# PowerShell
-$env:POSTGRES_DATABASE_URL = "postgresql://tenantrag_app:replace-with-a-local-secret@localhost:5432/tenantrag"
+# PowerShell: privileged migration/admin URL
+$env:POSTGRES_ADMIN_DATABASE_URL = "postgresql://tenantrag_app:ADMIN_PASSWORD@localhost:5432/tenantrag"
 ```
 
 Install dependencies and apply the PostgreSQL schema:
@@ -31,6 +36,34 @@ Install dependencies and apply the PostgreSQL schema:
 pip install -r requirements.txt
 alembic -c alembic-postgres.ini upgrade head
 ```
+
+Create the restricted runtime role using the admin connection (choose a
+strong password and keep it separate from the migration password):
+
+```sql
+CREATE ROLE tenantrag_runtime LOGIN PASSWORD 'RUNTIME_PASSWORD'
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+GRANT CONNECT ON DATABASE tenantrag TO tenantrag_runtime;
+GRANT USAGE ON SCHEMA public TO tenantrag_runtime;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO tenantrag_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO tenantrag_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE tenantrag_app IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO tenantrag_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE tenantrag_app IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO tenantrag_runtime;
+```
+
+Then configure the runtime connection and select the PostgreSQL backend:
+
+```bash
+# PowerShell
+$env:POSTGRES_DATABASE_URL = "postgresql://tenantrag_runtime:RUNTIME_PASSWORD@localhost:5432/tenantrag"
+$env:DATABASE_BACKEND = "postgres"
+```
+
+Apply MySQL metadata and Chroma imports below before switching production
+traffic. The app's PostgreSQL path uses Ollama for Nomic embeddings and the
+existing local Llama model for answer generation.
 
 ## Tenant isolation contract
 
