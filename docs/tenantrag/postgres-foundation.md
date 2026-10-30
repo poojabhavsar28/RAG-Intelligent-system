@@ -34,12 +34,12 @@ alembic -c alembic-postgres.ini upgrade head
 ## Tenant isolation contract
 
 1. Authenticate the caller using the existing session/token flow.
-2. Resolve the tenant UUID from the authenticated server-side session.
+2. Resolve the tenant ID string from the authenticated server-side session.
 3. Open a transaction with `tenant_transaction(engine, trusted_tenant_id)`.
 4. Perform all tenant-owned reads and writes on the yielded connection.
 5. Never accept `app.tenant_id` from request payloads or caller-controlled headers.
 
-The transaction helper uses PostgreSQL `SET LOCAL` semantics through
+Tenant IDs are stored as `TEXT` throughout the PostgreSQL schema. Existing IDs are preserved byte-for-byte as strings; they are not converted to UUIDs or regenerated. Internal resource IDs such as session, document and chunk IDs may still use UUIDs. The transaction helper uses PostgreSQL `SET LOCAL` semantics through
 `set_config(..., true)`, so the setting is scoped to the transaction and
 does not leak across pooled connections.
 
