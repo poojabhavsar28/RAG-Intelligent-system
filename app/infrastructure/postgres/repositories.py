@@ -53,6 +53,21 @@ class PostgresTenantRepository:
     def exists(self, tenant_id: str) -> bool:
         return self.get_by_id(tenant_id) is not None
 
+    def resolve_api_key(self, token_hash: str) -> Optional[str]:
+        """Resolve a tenant from a hashed tenant API key before RLS context exists."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT tenant_id FROM auth_token_lookup
+                    WHERE token_hash = :token_hash
+                      AND token_type = 'tenant_api_key'
+                      AND revoked_at IS NULL
+                      AND (expires_at IS NULL OR expires_at > now())
+                """),
+                {"token_hash": token_hash},
+            ).mappings().first()
+            return row["tenant_id"] if row else None
+
 
 class PostgresSessionRepository:
     def __init__(self, engine: Engine):
@@ -99,6 +114,67 @@ class PostgresSessionRepository:
                     "subject_id": str(customer_id),
                     "session_id": sid,
                     "expires_at": expires_at,
+                },
+            )
+
+    def create_bundle(
+        self,
+        session_id: str,
+        tenant_id: str,
+        customer_id: str,
+        session_token_hash: str,
+        customer_token_hash: str,
+        session_ttl_hours: int,
+        customer_token_ttl_days: int,
+        language: str = "en",
+    ) -> None:
+        """Create session and both token records atomically within one tenant transaction."""
+        sid = UUID(str(session_id))
+        now = datetime.now(timezone.utc)
+        session_expiry = now + timedelta(hours=session_ttl_hours)
+        customer_expiry = now + timedelta(days=customer_token_ttl_days)
+        with tenant_transaction(self._engine, tenant_id) as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO sessions
+                        (session_id, tenant_id, customer_id, token_hash, language, created_at, expires_at)
+                    VALUES
+                        (:session_id, :tenant_id, :customer_id, :token_hash, :language, :created_at, :expires_at)
+                """),
+                {
+                    "session_id": sid, "tenant_id": tenant_id,
+                    "customer_id": str(customer_id), "token_hash": session_token_hash,
+                    "language": language, "created_at": now, "expires_at": session_expiry,
+                },
+            )
+            conn.execute(
+                text("""
+                    INSERT INTO customer_tokens
+                        (token_hash, tenant_id, customer_id, created_at, expires_at)
+                    VALUES (:token_hash, :tenant_id, :customer_id, :created_at, :expires_at)
+                """),
+                {
+                    "token_hash": customer_token_hash, "tenant_id": tenant_id,
+                    "customer_id": str(customer_id), "created_at": now,
+                    "expires_at": customer_expiry,
+                },
+            )
+            conn.execute(
+                text("""
+                    INSERT INTO auth_token_lookup
+                        (token_hash, token_type, tenant_id, subject_id, session_id, expires_at)
+                    VALUES
+                        (:session_hash, 'session', :tenant_id, :customer_id, :session_id, :session_expiry),
+                        (:customer_hash, 'customer', :tenant_id, :customer_id, NULL, :customer_expiry)
+                """),
+                {
+                    "session_hash": session_token_hash,
+                    "customer_hash": customer_token_hash,
+                    "tenant_id": tenant_id,
+                    "customer_id": str(customer_id),
+                    "session_id": sid,
+                    "session_expiry": session_expiry,
+                    "customer_expiry": customer_expiry,
                 },
             )
 
