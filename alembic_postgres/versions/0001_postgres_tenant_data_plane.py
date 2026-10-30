@@ -48,7 +48,8 @@ def upgrade() -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             expires_at TIMESTAMPTZ,
             FOREIGN KEY (tenant_id, user_id)
-                REFERENCES app_users(tenant_id, user_id)
+                REFERENCES app_users(tenant_id, user_id),
+            UNIQUE (tenant_id, session_id)
         )
     """)
     op.execute("CREATE INDEX idx_sessions_tenant_customer ON sessions(tenant_id, customer_id)")
@@ -159,16 +160,19 @@ def upgrade() -> None:
         )
     """)
     op.execute("CREATE INDEX idx_document_acl_principal ON document_acl(tenant_id, principal_type, principal_id, permission)")
+    op.execute("CREATE INDEX idx_document_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops)")
+    op.execute("CREATE INDEX idx_documents_metadata_gin ON documents USING gin (metadata)")
+    op.execute("CREATE INDEX idx_document_chunks_metadata_gin ON document_chunks USING gin (metadata)")
 
     # RLS is enabled and forced on every tenant-owned table. The app must set
     # app.tenant_id with SET LOCAL inside each transaction after authentication.
-    for table in ("app_users", "sessions", "customer_tokens", "chat_history", "qa_templates", "documents", "document_chunks", "document_acl"):
+    for table in ("tenants", "app_users", "sessions", "customer_tokens", "chat_history", "qa_templates", "documents", "document_chunks", "document_acl"):
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
         op.execute(
             f"CREATE POLICY tenant_isolation_{table} ON {table} "
-            "USING (tenant_id = current_setting('app.tenant_id', true)::uuid) "
-            "WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid)"
+            "USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid) "
+            "WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)"
         )
 
 
