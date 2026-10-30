@@ -33,12 +33,12 @@ jobs:
       - name: Install migration dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install "SQLAlchemy>=2.0,<3.0" "alembic>=1.13,<2.0" "psycopg[binary]>=3.2,<4.0" "pgvector>=0.3,<1.0" "pytest>=8,<10"
+          pip install "SQLAlchemy>=2.0,<3.0" "alembic>=1.13,<2.0" "psycopg[binary]>=3.2,<4.0" "pgvector>=0.3,<1.0" "pytest>=8,<10" "mysql-connector-python>=9,<10"
       - name: Apply PostgreSQL migrations
         run: alembic -c alembic-postgres.ini upgrade head
       - name: Verify migration state
         run: alembic -c alembic-postgres.ini current
       - name: Compile PostgreSQL modules
-        run: python -m compileall -q app/infrastructure/postgres app/infrastructure/vectorstore alembic_postgres tests
+        run: python -m compileall -q app/infrastructure/postgres app/infrastructure/vectorstore alembic_postgres scripts tests
       - name: Run tenant identifier unit tests
-        run: python -m pytest -q tests/test_tenant_db.py tests/test_postgres_rls.py tests/test_pgvector_retriever.py
+        run: python -m pytest -q tests/test_tenant_db.py tests/test_postgres_rls.py tests/test_pgvector_retriever.py tests/test_migration_helpers.py
