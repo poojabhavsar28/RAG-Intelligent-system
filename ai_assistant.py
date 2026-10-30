@@ -504,14 +504,14 @@ Question: {question}<|eot_id|>
                     }
 
                 history = self.get_session_history(session_id).messages[-10:]
-                history_text = "\\n".join(
+                history_text = "\n".join(
                     f"{getattr(message, 'type', 'message')}: {getattr(message, 'content', str(message))}"
                     for message in history
                 )
-                retrieved_text = "\\n\\n".join(hit.text for hit in hits)
+                retrieved_text = "\n\n".join(hit.text for hit in hits)
                 prompt = self.PROMPT_HI if lang.lower() == "hi" else self.PROMPT_EN
                 prompt_text = prompt.format(
-                    context=(f"Conversation history:\\n{history_text}\\n\\n" if history_text else "") + retrieved_text,
+                    context=(f"Conversation history:\n{history_text}\n\n" if history_text else "") + retrieved_text,
                     question=query,
                 )
                 response = await asyncio.to_thread(self.llm.invoke, prompt_text)
