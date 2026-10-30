@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.engine import make_url
 
 from app.domain.retrieval import RetrievalContext
@@ -74,6 +75,12 @@ def test_rls_isolates_tenants_for_non_superuser_runtime_role():
             password=runtime_password,
         )
         runtime_engine = create_engine(runtime_url)
+
+        # Runtime credentials must not be able to enumerate the global
+        # authentication bootstrap index directly.
+        with pytest.raises(DBAPIError):
+            with runtime_engine.connect() as conn:
+                conn.execute(text("SELECT count(*) FROM auth_token_lookup"))
 
         with tenant_transaction(runtime_engine, tenant_a) as conn:
             conn.execute(
