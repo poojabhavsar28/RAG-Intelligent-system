@@ -57,6 +57,32 @@ The application database role must not be a superuser and must not have
 `BYPASSRLS`. Table owners are subject to RLS because the migration enables
 `FORCE ROW LEVEL SECURITY`.
 
+## Legacy MySQL metadata import
+
+After applying the PostgreSQL migrations, the initial restartable importer is
+available at `scripts/migrate_mysql_to_postgres.py`. It copies tenant rows,
+sessions, customer tokens, chat history, and FAQ templates in batches. It
+preserves tenant IDs exactly and imports legacy chat/FAQ row IDs so reruns do
+not duplicate those rows.
+
+Configure the existing MySQL connection variables
+(`MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DB`)
+and `POSTGRES_ADMIN_DATABASE_URL`, then run:
+
+```bash
+python scripts/migrate_mysql_to_postgres.py
+```
+
+The PostgreSQL URL must use a dedicated migration administrator with
+`BYPASSRLS`; do not use the restricted application role for bulk import.
+Back up both databases first. The importer intentionally stops if a legacy
+session ID is not a UUID rather than generating a replacement.
+
+This first importer does **not** move Chroma vector contents or physical
+Chroma directories. Those require a separate export/re-embedding process into
+the 768-dimensional `document_chunks` table. It also does not delete or
+modify source MySQL rows.
+
 ## Data-plane design
 
 - PostgreSQL is the canonical metadata, session, token, document and chunk
