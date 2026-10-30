@@ -158,24 +158,29 @@ Do not run the old MySQL migration chain against PostgreSQL. Use
 
 ## Current implementation boundary
 
-The PostgreSQL repository adapters now cover tenant lookup, session creation
-and lookup, customer-token creation and validation, and chat-history reads
-and writes. They use the RLS transaction helper for tenant-owned tables and
-the hash-only bootstrap index for pre-RLS token resolution.
+The optional PostgreSQL application path is now wired in `app.main` and is
+selected with `DATABASE_BACKEND=postgres`. It uses PostgreSQL repositories
+for sessions, customer tokens, chat history, tenants, and FAQ templates;
+session plus customer-token creation is atomic. The session-creation endpoint
+requires `X-Tenant-API-Key` and resolves the trusted tenant from the
+hash-only bootstrap table. Provision keys with
+`scripts/provision_tenant_api_key.py` after the tenant has been imported.
 
-The FastAPI service graph and `AIAssistant` are **not yet switched**: the
-active runtime still uses MySQL/Chroma. Do not treat the new repositories as
-a completed database cutover.
+The PostgreSQL RAG path uses `PgVectorRetriever` with tenant RLS, language,
+active-document, and user/group/role ACL filters. The current assistant adds
+the legacy `tenant_member` role to preserve access to imported Chroma
+collections. The MySQL backend remains the default unless
+`DATABASE_BACKEND=postgres` is explicitly set.
 
-Before wiring session creation to PostgreSQL, replace the current
-caller-supplied `tenant_id` request field as the source of authority with a
-trusted tenant resolver (for example, a tenant API credential or verified
-host/domain mapping). Otherwise a caller could request session creation for
-a tenant by guessing its identifier. Session and customer-token creation
-also still need a single atomic transaction at the service boundary.
+The relational importer and Chroma-to-pgvector importer are committed, but
+neither has been executed against your actual databases or Chroma directories.
+Do not switch production traffic until you have backed up the sources, run
+both imports, reconciled row/chunk counts, provisioned tenant API keys, and
+tested real API requests. Chroma collection paths and embedding dimensions
+are validated by the importer; no source data is deleted.
 
-GitHub Actions has successfully applied both PostgreSQL migrations,
-compiled the PostgreSQL modules, passed tenant-ID and pgvector contract
-tests, and exercised tenant RLS using a non-superuser runtime role. This
-validates the schema and isolation foundation; it is not yet an end-to-end
-FastAPI integration test or a production performance benchmark.
+GitHub Actions has successfully applied the PostgreSQL migrations, compiled
+the application and migration modules, passed tenant-ID, migration-helper,
+and pgvector contract tests, and exercised RLS plus ACL-aware vector retrieval
+using a non-superuser runtime role. These are CI integration checks, not a
+production load benchmark or proof of successful migration of your data.
