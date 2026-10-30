@@ -47,7 +47,16 @@ def test_rls_isolates_tenants_for_non_superuser_runtime_role():
                 "GRANT USAGE ON SCHEMA public TO tenantrag_runtime_test"
             ))
             conn.execute(text(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public "
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON tenants, app_users, sessions, "
+                "customer_tokens, chat_history, qa_templates, documents, document_chunks, "
+                "document_acl TO tenantrag_runtime_test"
+            ))
+            conn.execute(text(
+                "GRANT EXECUTE ON FUNCTION public.lookup_auth_token(TEXT, TEXT, UUID) "
+                "TO tenantrag_runtime_test"
+            ))
+            conn.execute(text(
+                "GRANT EXECUTE ON FUNCTION public.lookup_session_tenant(UUID) "
                 "TO tenantrag_runtime_test"
             ))
             conn.execute(text(
