@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 import time
 
 # Import AI Assistant
-from aiassistant61_optimise43 import AIAssistant
+from ai_assistant import AIAssistant
 load_dotenv()
 
 # Configure logging
@@ -125,7 +125,7 @@ async def lifespan(app: FastAPI):
         )
         logger.info("MySQL connection pool initialized successfully")
 
-        ai_assistant = AIAssistant(chroma_db_base_dir=CHROMA_DB_BASE_DIR, executor=executor)
+        ai_assistant = AIAssistant(chroma_db_base_dir=CHROMA_DB_BASE_DIR, executor=executor, db_pool=db_pool)
         asyncio.create_task(initialize_ai_assistant())
         await run_in_threadpool(create_tables_if_not_exists)
 
