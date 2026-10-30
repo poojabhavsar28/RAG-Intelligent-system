@@ -78,10 +78,27 @@ The PostgreSQL URL must use a dedicated migration administrator with
 Back up both databases first. The importer intentionally stops if a legacy
 session ID is not a UUID rather than generating a replacement.
 
-This first importer does **not** move Chroma vector contents or physical
-Chroma directories. Those require a separate export/re-embedding process into
-the 768-dimensional `document_chunks` table. It also does not delete or
-modify source MySQL rows.
+The vector collections have a separate importer:
+`scripts/migrate_chroma_to_pgvector.py`. Run it after the metadata importer
+with the same MySQL variables, `CHROMA_DB_BASE_DIR`, and
+`POSTGRES_ADMIN_DATABASE_URL` configured:
+
+```bash
+python scripts/migrate_chroma_to_pgvector.py
+```
+
+It reads each tenant/language path from MySQL `chroma_metadata`, copies
+existing embeddings directly into `document_chunks`, and creates stable
+document/chunk UUIDs from legacy source identifiers. It fails closed if a
+vector is not 768-dimensional or a collection path escapes
+`CHROMA_DB_BASE_DIR`. Imported legacy chunks receive a tenant-local
+`tenant_member` read ACL to preserve the old tenant-isolated access model;
+the application must include `tenant_member` in the authenticated
+`RetrievalContext.role_ids` when serving those chunks.
+
+Neither importer deletes or modifies source MySQL rows or physical Chroma
+directories. Keep both source systems intact until row counts, retrieval
+quality, ACL behavior, and application cutover have been verified.
 
 ## Data-plane design
 
