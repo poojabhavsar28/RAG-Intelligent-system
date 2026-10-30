@@ -1,7 +1,8 @@
 """Tenant-scoped PostgreSQL transaction helpers.
 
-Call tenant_transaction only after authenticating the request and deriving the
-tenant UUID from trusted server-side identity (never directly from request JSON).
+Tenant identifiers are opaque strings inherited from the existing application.
+They are never parsed, normalized, or regenerated as UUIDs. Call this helper
+only after authentication has resolved the tenant from trusted server identity.
 SET LOCAL scopes the tenant setting to this transaction, preventing pooled
 connections from carrying one request's tenant context into another.
 """
@@ -9,10 +10,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import Iterator
-from uuid import UUID
 
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import Connection
+
+
+def validate_tenant_id(tenant_id: str) -> str:
+    """Validate a tenant identifier without changing its exact value."""
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise ValueError("tenant_id must be a non-empty string")
+    return tenant_id
 
 
 def create_postgres_engine(
@@ -37,12 +44,9 @@ def create_postgres_engine(
 
 
 @contextmanager
-def tenant_transaction(engine: Engine, tenant_id: str | UUID) -> Iterator[Connection]:
+def tenant_transaction(engine: Engine, tenant_id: str) -> Iterator[Connection]:
     """Open a transaction with PostgreSQL RLS tenant context set locally."""
-    try:
-        trusted_tenant_id = str(UUID(str(tenant_id)))
-    except (TypeError, ValueError, AttributeError) as exc:
-        raise ValueError("tenant_id must be a valid UUID from authenticated identity") from exc
+    trusted_tenant_id = validate_tenant_id(tenant_id)
 
     with engine.begin() as connection:
         connection.execute(
