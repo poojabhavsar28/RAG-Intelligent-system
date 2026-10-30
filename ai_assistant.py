@@ -37,7 +37,7 @@ class AIAssistant:
             cls._instance = super(AIAssistant, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, chroma_db_base_dir: str, executor: ThreadPoolExecutor = None):
+    def __init__(self, chroma_db_base_dir: str, executor: ThreadPoolExecutor = None, db_pool=None):
         if not hasattr(self, 'initialized'):
             self.initialized = True
             self.executor = executor or ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai_worker")
@@ -57,8 +57,11 @@ class AIAssistant:
             self.MYSQL_USER = os.getenv("MYSQL_USER")
             self.MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
             self.MYSQL_DB = os.getenv("MYSQL_DB")
-            self.db_pool = None
-            self._init_db_pool()
+            # Reuse the application-owned pool when supplied. This avoids
+            # opening a second pool against the same database.
+            self.db_pool = db_pool
+            if self.db_pool is None:
+                self._init_db_pool()
 
             # Prompts
             self.PROMPT_EN = PromptTemplate(
@@ -86,8 +89,7 @@ Question: {question}<|eot_id|>
                 input_variables=["context", "question"]
             )
 
-            # Ensure tables exist
-            self.init_mysql_db()
+            # Schema is managed by migrations, never mutated at import/startup.
             logger.info("AI Assistant initialized")
 
     # ------------------ Memory Optimization ------------------ #
