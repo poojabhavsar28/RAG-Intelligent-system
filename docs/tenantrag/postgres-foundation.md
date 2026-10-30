@@ -2,10 +2,11 @@
 
 ## Scope of this increment
 
-This branch now contains a **separate PostgreSQL migration history** and a
-transaction helper for setting PostgreSQL row-level-security (RLS) context.
-The existing MySQL runtime and MySQL Alembic history are intentionally left
-untouched while the PostgreSQL repositories and service wiring are built.
+This branch now contains a **separate PostgreSQL migration history**, a
+transaction helper for setting PostgreSQL row-level-security (RLS) context,
+a hash-only authentication bootstrap index, and initial PostgreSQL repository
+adapters. The existing MySQL runtime and MySQL Alembic history are intentionally
+left untouched while authentication and service wiring are completed.
 
 ## Start PostgreSQL
 
@@ -35,13 +36,22 @@ alembic -c alembic-postgres.ini upgrade head
 
 1. Authenticate the caller using the existing session/token flow.
 2. Resolve the tenant ID string from the authenticated server-side session.
-3. Open a transaction with `tenant_transaction(engine, trusted_tenant_id)`.
-4. Perform all tenant-owned reads and writes on the yielded connection.
-5. Never accept `app.tenant_id` from request payloads or caller-controlled headers.
+3. For bearer-token authentication, resolve the tenant through
+   `auth_token_lookup` using the token hash and expected token type.
+4. Open a transaction with `tenant_transaction(engine, trusted_tenant_id)`.
+5. Perform all tenant-owned reads and writes on the yielded connection.
+6. Never accept `app.tenant_id` from request payloads or caller-controlled headers.
 
 Tenant IDs are stored as `TEXT` throughout the PostgreSQL schema. Existing IDs are preserved byte-for-byte as strings; they are not converted to UUIDs or regenerated. Internal resource IDs such as session, document and chunk IDs may still use UUIDs. The transaction helper uses PostgreSQL `SET LOCAL` semantics through
 `set_config(..., true)`, so the setting is scoped to the transaction and
 does not leak across pooled connections.
+
+The `auth_token_lookup` table is the deliberate exception to tenant RLS:
+authentication needs a minimal lookup before the tenant is known. It stores
+only token hashes, token type, tenant ID, subject ID, session ID (when
+applicable), and expiry/revocation timestamps. Restrict access to this table
+to the authentication/repository layer; never expose it through a general
+query endpoint.
 
 The application database role must not be a superuser and must not have
 `BYPASSRLS`. Table owners are subject to RLS because the migration enables
@@ -66,11 +76,25 @@ The original `alembic.ini` and `alembic/` directory are MySQL-specific.
 Do not run the old MySQL migration chain against PostgreSQL. Use
 `alembic-postgres.ini` for the new data plane.
 
-## Not yet complete
+## Current implementation boundary
 
-The current API repositories and `AIAssistant` still use MySQL/Chroma.
-They have not yet been switched to PostgreSQL. The next implementation
-increment must add PostgreSQL repositories, tenant-scoped hybrid retrieval,
-and service wiring, then port sessions, tokens, chat history and FAQ access.
-No migration or benchmark has been executed against a live PostgreSQL server
-in this commit, so runtime success and performance numbers are not claimed.
+The PostgreSQL repository adapters now cover tenant lookup, session creation
+and lookup, customer-token creation and validation, and chat-history reads
+and writes. They use the RLS transaction helper for tenant-owned tables and
+the hash-only bootstrap index for pre-RLS token resolution.
+
+The FastAPI service graph and `AIAssistant` are **not yet switched**: the
+active runtime still uses MySQL/Chroma. Do not treat the new repositories as
+a completed database cutover.
+
+Before wiring session creation to PostgreSQL, replace the current
+caller-supplied `tenant_id` request field as the source of authority with a
+trusted tenant resolver (for example, a tenant API credential or verified
+host/domain mapping). Otherwise a caller could request session creation for
+a tenant by guessing its identifier. Session and customer-token creation
+also still need a single atomic transaction at the service boundary.
+
+GitHub Actions has successfully applied both PostgreSQL migrations and run
+the tenant-ID unit tests and PostgreSQL-module compilation. This validates
+schema creation and basic helper behavior; it is not yet an end-to-end API
+integration test or a production performance benchmark.
