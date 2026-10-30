@@ -58,11 +58,7 @@ class PostgresTenantRepository:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text("""
-                    SELECT tenant_id FROM auth_token_lookup
-                    WHERE token_hash = :token_hash
-                      AND token_type = 'tenant_api_key'
-                      AND revoked_at IS NULL
-                      AND (expires_at IS NULL OR expires_at > now())
+                    SELECT tenant_id FROM public.lookup_auth_token(:token_hash, 'tenant_api_key')
                 """),
                 {"token_hash": token_hash},
             ).mappings().first()
@@ -185,12 +181,7 @@ class PostgresSessionRepository:
         with self._engine.connect() as conn:
             identity = conn.execute(
                 text("""
-                    SELECT tenant_id FROM auth_token_lookup
-                    WHERE token_hash = :token_hash
-                      AND token_type = 'session'
-                      AND session_id = :session_id
-                      AND revoked_at IS NULL
-                      AND (expires_at IS NULL OR expires_at > now())
+                    SELECT tenant_id FROM public.lookup_auth_token(:token_hash, 'session', :session_id)
                 """),
                 {"token_hash": api_token_hash, "session_id": sid},
             ).mappings().first()
@@ -203,9 +194,7 @@ class PostgresSessionRepository:
         with self._engine.connect() as conn:
             identity = conn.execute(
                 text("""
-                    SELECT tenant_id FROM auth_token_lookup
-                    WHERE token_type = 'session' AND session_id = :session_id
-                    ORDER BY created_at DESC LIMIT 1
+                    SELECT public.lookup_session_tenant(:session_id) AS tenant_id
                 """),
                 {"session_id": sid},
             ).mappings().first()
@@ -274,10 +263,8 @@ class PostgresTokenRepository:
         with self._engine.connect() as conn:
             identity = conn.execute(
                 text("""
-                    SELECT tenant_id, subject_id FROM auth_token_lookup
-                    WHERE token_hash = :token_hash AND token_type = 'customer'
-                      AND revoked_at IS NULL
-                      AND (expires_at IS NULL OR expires_at > now())
+                    SELECT tenant_id, subject_id
+                    FROM public.lookup_auth_token(:token_hash, 'customer')
                 """),
                 {"token_hash": token_hash},
             ).mappings().first()
