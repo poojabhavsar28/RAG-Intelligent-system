@@ -342,3 +342,22 @@ class PostgresChatRepository:
                 {"tenant_id": identity["tenant_id"], "session_id": sid},
             ).mappings().all()
             return [ChatMessageRecord(**dict(row)) for row in rows]
+
+
+
+class PostgresQATemplateRepository:
+    def __init__(self, engine: Engine):
+        self._engine = engine
+
+    def get_questions(self, tenant_id: str, language: str) -> list[dict]:
+        with tenant_transaction(self._engine, tenant_id) as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT question, answer, created_at
+                    FROM qa_templates
+                    WHERE tenant_id = :tenant_id AND language = :language
+                    ORDER BY id ASC
+                """),
+                {"tenant_id": tenant_id, "language": language},
+            ).mappings().all()
+            return [dict(row) for row in rows]
