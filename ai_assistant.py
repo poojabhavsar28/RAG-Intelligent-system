@@ -20,6 +20,8 @@ import mysql.connector
 from mysql.connector import pooling, Error
 from dotenv import load_dotenv
 
+from app.domain.retrieval import RetrievalContext
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
@@ -37,7 +39,7 @@ class AIAssistant:
             cls._instance = super(AIAssistant, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, chroma_db_base_dir: str, executor: ThreadPoolExecutor = None, db_pool=None):
+    def __init__(self, chroma_db_base_dir: str, executor: ThreadPoolExecutor = None, db_pool=None, qa_repository=None, pg_retriever=None, disable_mysql: bool = False):
         if not hasattr(self, 'initialized'):
             self.initialized = True
             self.executor = executor or ThreadPoolExecutor(max_workers=3, thread_name_prefix="ai_worker")
@@ -60,7 +62,9 @@ class AIAssistant:
             # Reuse the application-owned pool when supplied. This avoids
             # opening a second pool against the same database.
             self.db_pool = db_pool
-            if self.db_pool is None:
+            self.qa_repository = qa_repository
+            self.pg_retriever = pg_retriever
+            if self.db_pool is None and not disable_mysql:
                 self._init_db_pool()
 
             # Prompts
@@ -411,11 +415,16 @@ Question: {question}<|eot_id|>
 
     # ------------------ QA Templates ------------------ #
     async def get_questions(self, tenant_id: str, lang: str) -> List[Dict[str, Any]]:
+        if self.qa_repository is not None:
+            return self.qa_repository.get_questions(tenant_id, lang)
+
+        conn = None
         try:
             conn = self.get_mysql_connection()
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT question, answer, created_at  FROM qa_templates WHERE tenant_id=%s AND lang=%s", (tenant_id, lang))
+            cursor.execute("SELECT question, answer, created_at FROM qa_templates WHERE tenant_id=%s AND lang=%s", (tenant_id, lang))
             results = cursor.fetchall()
+            cursor.close()
             return results or []
         finally:
             if conn and conn.is_connected():
@@ -469,6 +478,61 @@ Question: {question}<|eot_id|>
                         "tenant_id": tenant_id,
                         "customer_id": str(customer_id)
                     }
+
+            # PostgreSQL retrieval path: the retriever applies tenant RLS,
+            # language/status filters, and document ACLs before generation.
+            if self.pg_retriever is not None:
+                retrieval_context = RetrievalContext(
+                    tenant_id=tenant_id,
+                    user_id=str(customer_id),
+                    role_ids=("tenant_member",),
+                    language=lang,
+                    require_document_acl=True,
+                )
+                hits = self.pg_retriever.retrieve(retrieval_context, query, k=10)
+                if not hits:
+                    fallback = (
+                        "मेरे ज्ञान आधार में यह जानकारी नहीं है। कृपया अधिक विवरण के लिए समर्थन से संपर्क करें।"
+                        if lang.lower() == "hi"
+                        else "I don't have specific information about this topic in my knowledge base. Please contact support for more detailed assistance."
+                    )
+                    return {
+                        "answer": fallback,
+                        "sources": [],
+                        "tenant_id": tenant_id,
+                        "customer_id": str(customer_id),
+                    }
+
+                history = self.get_session_history(session_id).messages[-10:]
+                history_text = "\\n".join(
+                    f"{getattr(message, 'type', 'message')}: {getattr(message, 'content', str(message))}"
+                    for message in history
+                )
+                retrieved_text = "\\n\\n".join(hit.text for hit in hits)
+                prompt = self.PROMPT_HI if lang.lower() == "hi" else self.PROMPT_EN
+                prompt_text = prompt.format(
+                    context=(f"Conversation history:\\n{history_text}\\n\\n" if history_text else "") + retrieved_text,
+                    question=query,
+                )
+                response = await asyncio.to_thread(self.llm.invoke, prompt_text)
+                raw_answer = getattr(response, "content", response)
+                answer = self.clean_answer(str(raw_answer), lang=lang)
+                sources = [
+                    {
+                        "content": hit.text[:500] + ("..." if len(hit.text) > 500 else ""),
+                        "metadata": dict(hit.metadata),
+                        "document_id": hit.document_id,
+                        "chunk_id": hit.chunk_id,
+                        "score": hit.score,
+                    }
+                    for hit in hits
+                ]
+                return {
+                    "answer": answer,
+                    "sources": sources,
+                    "tenant_id": tenant_id,
+                    "customer_id": str(customer_id),
+                }
 
             # Check Chroma collection
             collection_exists = self._check_chroma_collection_exists(tenant_id, lang)
