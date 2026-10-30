@@ -28,6 +28,15 @@ from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import configure_logging
 from app.infrastructure.db.mysql_pool import MySQLPool
+from app.infrastructure.postgres.tenant_db import create_postgres_engine
+from app.infrastructure.postgres.repositories import (
+    PostgresChatRepository,
+    PostgresQATemplateRepository,
+    PostgresSessionRepository,
+    PostgresTenantRepository,
+    PostgresTokenRepository,
+)
+from app.infrastructure.vectorstore.pgvector_store import PgVectorRetriever
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.tenant_repository import TenantRepository
@@ -80,33 +89,58 @@ async def _lifespan(app: FastAPI):
     executor = ThreadPoolExecutor(max_workers=settings.max_workers, thread_name_prefix="ai_worker")
     logger.info("Thread pool executor initialized with %s workers", settings.max_workers)
 
-    mysql_pool = MySQLPool(settings)
-    mysql_pool.init()
+    mysql_pool = None
+    postgres_engine = None
 
-    # NOTE: schema management moved to Alembic (see alembic/versions/).
-    # The app no longer creates/alters tables on startup -- that's a
-    # standard production practice: schema changes should be an explicit,
-    # reviewable step (`alembic upgrade head`, run in CI/deploy), not a
-    # side effect of the app happening to boot. Run migrations before
-    # starting the app:
-    #     alembic upgrade head
-    #     uvicorn app.main:app
+    # Schema management is an explicit deployment step. The PostgreSQL
+    # backend is opt-in until the metadata and Chroma importers have been
+    # run and verified for the target environment.
+    if settings.database_backend == "postgres":
+        postgres_engine = create_postgres_engine(
+            settings.postgres_database_url,
+            pool_size=settings.postgres_pool_size,
+            max_overflow=settings.postgres_max_overflow,
+            pool_timeout=settings.postgres_pool_timeout,
+        )
+        session_repo = PostgresSessionRepository(postgres_engine)
+        token_repo = PostgresTokenRepository(postgres_engine)
+        chat_repo = PostgresChatRepository(postgres_engine)
+        tenant_repo = PostgresTenantRepository(postgres_engine)
+        qa_repository = PostgresQATemplateRepository(postgres_engine)
 
-    session_repo = SessionRepository(mysql_pool)
-    token_repo = TokenRepository(mysql_pool)
-    chat_repo = ChatRepository(mysql_pool)
-    tenant_repo = TenantRepository(mysql_pool)
+        from langchain_ollama import OllamaEmbeddings
+        embedder = OllamaEmbeddings(model=settings.embedding_model)
+        pg_retriever = PgVectorRetriever(postgres_engine, embedder)
 
-    # --- AI assistant (not yet migrated — see module docstring) ---
-    from ai_assistant import AIAssistant  # local import: legacy module, migrates in the LLM-layer phase
+        from ai_assistant import AIAssistant
+        ai_assistant = AIAssistant(
+            chroma_db_base_dir=settings.chroma_db_base_dir,
+            executor=executor,
+            qa_repository=qa_repository,
+            pg_retriever=pg_retriever,
+            disable_mysql=True,
+        )
+        app.state.database_backend = "postgres"
+        app.state.postgres_engine = postgres_engine
+        app.state.tenant_repo = tenant_repo
+    else:
+        mysql_pool = MySQLPool(settings)
+        mysql_pool.init()
+        session_repo = SessionRepository(mysql_pool)
+        token_repo = TokenRepository(mysql_pool)
+        chat_repo = ChatRepository(mysql_pool)
+        tenant_repo = TenantRepository(mysql_pool)
 
-    # Fixed: previously AIAssistant created its own second MySQL pool
-    # internally. It now reuses this one via the raw_pool property.
-    ai_assistant = AIAssistant(
-        chroma_db_base_dir=settings.chroma_db_base_dir,
-        executor=executor,
-        db_pool=mysql_pool.raw_pool,
-    )
+        from ai_assistant import AIAssistant
+        ai_assistant = AIAssistant(
+            chroma_db_base_dir=settings.chroma_db_base_dir,
+            executor=executor,
+            db_pool=mysql_pool.raw_pool,
+        )
+        app.state.database_backend = "mysql"
+        app.state.mysql_pool = mysql_pool
+        app.state.tenant_repo = tenant_repo
+
     asyncio.create_task(_initialize_ai_assistant(ai_assistant))
 
     session_service = SessionService(
@@ -117,7 +151,10 @@ async def _lifespan(app: FastAPI):
 
     app.state.settings = settings
     app.state.executor = executor
-    app.state.mysql_pool = mysql_pool
+    if mysql_pool is not None:
+        app.state.mysql_pool = mysql_pool
+    if postgres_engine is not None:
+        app.state.postgres_engine = postgres_engine
     app.state.ai_assistant = ai_assistant
     app.state.session_service = session_service
     app.state.chat_service = chat_service
@@ -128,7 +165,10 @@ async def _lifespan(app: FastAPI):
     finally:
         logger.info("Shutting down application...")
         executor.shutdown(wait=False)
-        mysql_pool.shutdown()
+        if mysql_pool is not None:
+            mysql_pool.shutdown()
+        if postgres_engine is not None:
+            postgres_engine.dispose()
         logger.info("Application shutdown complete")
 
 
