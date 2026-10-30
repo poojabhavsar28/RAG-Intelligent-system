@@ -68,7 +68,6 @@ class PgVectorRetriever:
                           AND acl.permission IN ('read', 'write', 'admin')
                           AND (
                                 (acl.principal_type = 'user'
-                                 AND :user_id IS NOT NULL
                                  AND acl.principal_id = :user_id)
                              OR (acl.principal_type = 'group'
                                  AND acl.principal_id = ANY(CAST(:group_ids AS TEXT[])))
