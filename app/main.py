@@ -1,19 +1,11 @@
 """
-Application factory. This is the direct replacement for the old main.py.
+Application factory and canonical runtime entry point.
 
-Everything main.py did with module-level globals (db_pool, ai_assistant,
-executor, reassigned inside an inline lifespan function) now happens here,
-explicitly, with each piece stored on app.state instead of as a bare global.
-
-IMPORTANT — migration note: this file constructs AIAssistant from the
-*existing*, not-yet-refactored ai_assistant.py. Its ML logic (embeddings,
-LLM loading, retrieval chain) is untouched — only its MySQL pool creation
-was changed, to accept this file's pool via injection instead of creating
-a duplicate one internally (see ai_assistant.py's __init__ db_pool param
-and MySQLPool.raw_pool). Full migration into app/infrastructure/llm/ is a
-separate, later phase — deferred deliberately (strangler-fig pattern:
-decouple via the RAGEngine protocol first, migrate the implementation
-only when there's a concrete reason to).
+DATABASE_BACKEND=mysql preserves the legacy backend. DATABASE_BACKEND=postgres
+selects the PostgreSQL repositories, hash-based tenant API-key resolution,
+and ACL-aware pgvector retrieval. Both paths share the same FastAPI services.
+Schema changes remain explicit Alembic operations; the app never creates
+tables at startup.
 """
 import asyncio
 import logging
