@@ -12,6 +12,7 @@ class RetrievalContext:
     tenant_id: str
     user_id: str | None = None
     group_ids: tuple[str, ...] = ()
+    role_ids: tuple[str, ...] = ()
     language: str = "en"
     require_document_acl: bool = True
 
