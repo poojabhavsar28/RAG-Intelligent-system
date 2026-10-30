@@ -11,7 +11,9 @@ Trade-off: pydantic-settings adds a dependency, but it gets us validation
 (fail fast at startup if a required var is missing) and type coercion for free.
 """
 from functools import lru_cache
-from typing import List
+from typing import List, Literal
+
+from pydantic import model_validator
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,12 +34,19 @@ class Settings(BaseSettings):
     # (see security-and-performance phase).
     cors_allowed_origins: List[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
-    # --- MySQL ---
+    # --- Database backend ---
+    database_backend: Literal["mysql", "postgres"] = "mysql"
+    postgres_database_url: str | None = None
+    postgres_pool_size: int = 10
+    postgres_max_overflow: int = 10
+    postgres_pool_timeout: int = 30
+
+    # --- MySQL legacy backend ---
     mysql_host: str = "localhost"
     mysql_port: int = 3306
-    mysql_user: str
-    mysql_password: str
-    mysql_db: str
+    mysql_user: str = ""
+    mysql_password: str = ""
+    mysql_db: str = ""
     mysql_pool_size: int = 10
 
     # --- Vector store ---
@@ -55,6 +64,22 @@ class Settings(BaseSettings):
     # --- Auth token lifetime ---
     session_token_ttl_hours: int = 24
     customer_token_ttl_days: int = 30
+
+    @model_validator(mode="after")
+    def validate_database_configuration(self):
+        if self.database_backend == "postgres" and not self.postgres_database_url:
+            raise ValueError("POSTGRES_DATABASE_URL is required when DATABASE_BACKEND=postgres")
+        if self.database_backend == "mysql":
+            missing = [
+                name for name, value in (
+                    ("MYSQL_USER", self.mysql_user),
+                    ("MYSQL_PASSWORD", self.mysql_password),
+                    ("MYSQL_DB", self.mysql_db),
+                ) if not value
+            ]
+            if missing:
+                raise ValueError(f"Missing MySQL configuration: {', '.join(missing)}")
+        return self
 
 
 @lru_cache
