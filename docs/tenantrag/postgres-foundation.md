@@ -45,12 +45,19 @@ CREATE ROLE tenantrag_runtime LOGIN PASSWORD 'RUNTIME_PASSWORD'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
 GRANT CONNECT ON DATABASE tenantrag TO tenantrag_runtime;
 GRANT USAGE ON SCHEMA public TO tenantrag_runtime;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO tenantrag_runtime;
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  tenants, app_users, sessions, customer_tokens, chat_history,
+  qa_templates, documents, document_chunks, document_acl
+  TO tenantrag_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO tenantrag_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE tenantrag_app IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO tenantrag_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE tenantrag_app IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO tenantrag_runtime;
+GRANT EXECUTE ON FUNCTION public.lookup_auth_token(TEXT, TEXT, UUID)
+  TO tenantrag_runtime;
+GRANT EXECUTE ON FUNCTION public.lookup_session_tenant(UUID)
+  TO tenantrag_runtime;
+GRANT EXECUTE ON FUNCTION public.register_auth_token(TEXT, TEXT, TEXT, TEXT, UUID, TIMESTAMPTZ)
+  TO tenantrag_runtime;
+
+-- Never grant direct access to auth_token_lookup.
 ```
 
 Then configure the runtime connection and select the PostgreSQL backend:
