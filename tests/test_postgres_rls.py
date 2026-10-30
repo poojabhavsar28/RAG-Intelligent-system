@@ -61,6 +61,10 @@ def test_rls_isolates_tenants_for_non_superuser_runtime_role():
                 "TO tenantrag_runtime_test"
             ))
             conn.execute(text(
+                "GRANT EXECUTE ON FUNCTION public.register_auth_token(TEXT, TEXT, TEXT, TEXT, UUID, TIMESTAMPTZ) "
+                "TO tenantrag_runtime_test"
+            ))
+            conn.execute(text(
                 "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public "
                 "TO tenantrag_runtime_test"
             ))
