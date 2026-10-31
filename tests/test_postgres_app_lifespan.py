@@ -53,6 +53,7 @@ def test_postgres_lifespan_wires_real_repository_types_and_disposes_engine(monke
     engine.dispose = dispose
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     monkeypatch.setattr(main, "create_postgres_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr(main, "PgVectorRetriever", lambda *args, **kwargs: object())
 
     class FakeEmbeddings:
         def __init__(self, model):
@@ -86,6 +87,7 @@ def test_postgres_lifespan_wires_real_repository_types_and_disposes_engine(monke
             assert isinstance(app.state.session_service._token_repo, PostgresTokenRepository)
             assert isinstance(app.state.chat_service._chat_repo, PostgresChatRepository)
             assert isinstance(app.state.qa_service._session_repo, PostgresSessionRepository)
+            assert isinstance(app.state.ai_assistant.kwargs["qa_repository"], PostgresQATemplateRepository)
             assert isinstance(app.state.ai_assistant, FakeAssistant)
             assert app.state.ai_assistant.kwargs["disable_mysql"] is True
 
