@@ -14,15 +14,16 @@ security_scheme = HTTPBearer()
 @router.get(
     "/get-questions",
     response_model=QuestionsResponse,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Retrieve predefined questions",
 )
 async def get_questions(
     session_id: str = Query(...),
     lang: str = Query("en"),
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
     qa_service: QAService = Depends(get_qa_service),
 ):
-    result = await qa_service.get_questions(session_id, lang)
+    result = await qa_service.get_questions(session_id, credentials.credentials, lang)
     return QuestionsResponse(**result)
 
 
