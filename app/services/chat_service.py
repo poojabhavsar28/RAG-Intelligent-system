@@ -28,6 +28,7 @@ from app.repositories.token_repository import TokenRepository
 class AskResult:
     answer: str
     sources: List[Any]
+    tenant_id: str
 
 
 class ChatService:
@@ -55,7 +56,11 @@ class ChatService:
             lang=lang,
             session_id=session_id,
         )
-        return AskResult(answer=result["answer"], sources=result.get("sources", []))
+        return AskResult(
+            answer=result["answer"],
+            sources=result.get("sources", []),
+            tenant_id=session.tenant_id,
+        )
 
     def record_exchange(self, session_id: str, tenant_id: str, question: str, answer: str) -> None:
         """Called as a background task from the API route — the client gets
