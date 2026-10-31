@@ -318,9 +318,7 @@ class PostgresChatRepository:
         with self._engine.connect() as conn:
             identity = conn.execute(
                 text("""
-                    SELECT tenant_id FROM auth_token_lookup
-                    WHERE token_type = 'session' AND session_id = :session_id
-                    ORDER BY created_at DESC LIMIT 1
+                    SELECT public.lookup_session_tenant(:session_id) AS tenant_id
                 """),
                 {"session_id": sid},
             ).mappings().first()
