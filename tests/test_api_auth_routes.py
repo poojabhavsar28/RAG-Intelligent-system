@@ -105,7 +105,10 @@ def test_postgres_session_creation_rejects_invalid_tenant_api_key():
     assert app.state.session_service.calls == []
 
 
-def test_postgres_session_creation_rejects_tenant_id_spoofing():
+def test_postgres_session_creation_rejects_tenant_id_spoofing(monkeypatch):
+    from app.api.routes import sessions as sessions_route
+
+    monkeypatch.setattr(sessions_route, "hash_token", lambda value: f"hashed-{value}")
     client, app = make_client()
 
     response = client.post(
@@ -145,12 +148,12 @@ def test_postgres_session_creation_uses_tenant_resolved_from_api_key(monkeypatch
 def test_chat_endpoints_require_bearer_authentication(path, method):
     client, app = make_client()
 
-    response = getattr(client, method)(
-        path,
-        json={"query": "hello"} if method == "post" else None,
-    )
+    if method == "post":
+        response = client.post(path, json={"query": "hello"})
+    else:
+        response = client.get(path)
 
-    assert response.status_code == 403
+    assert response.status_code == 401
     assert app.state.chat_service.ask_calls == []
     assert app.state.chat_service.history_calls == []
     assert app.state.qa_service.calls == []
