@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local application configuration and runtime data
+.env.*
+!.env.example
+.venv/
+venv/
+DockerDesktopWSL/
+chroma_db_base/
+__pycache__/
+*.py[cod]
+.pytest_cache/

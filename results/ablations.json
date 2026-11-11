@@ -1,0 +1,75 @@
+{
+  "retrieval": [
+    {
+      "config": "dense only",
+      "recall@1": 0.7351,
+      "recall@5": 0.9735,
+      "MRR": 0.8273,
+      "nDCG@10": 0.8654,
+      "p95_ms": 0.5605,
+      "leaks": 0
+    },
+    {
+      "config": "BM25 only",
+      "recall@1": 0.9007,
+      "recall@5": 1.0,
+      "MRR": 0.9454,
+      "nDCG@10": 0.9594,
+      "p95_ms": 0.5373,
+      "leaks": 0
+    },
+    {
+      "config": "hybrid (RRF)",
+      "recall@1": 0.8609,
+      "recall@5": 0.9801,
+      "MRR": 0.9164,
+      "nDCG@10": 0.9343,
+      "p95_ms": 1.0468,
+      "leaks": 0
+    },
+    {
+      "config": "hybrid + rerank",
+      "recall@1": 0.9205,
+      "recall@5": 0.9934,
+      "MRR": 0.9547,
+      "nDCG@10": 0.9662,
+      "p95_ms": 2.582,
+      "leaks": 0
+    }
+  ],
+  "self_check": [
+    {
+      "config": "no self-check",
+      "answer_accuracy": 0.921,
+      "wrongly_abstained": 0.0,
+      "hallucination_unanswerable": 0.99,
+      "answered_forbidden_q(near-miss)": 0.975,
+      "leaked_forbidden_doc": 0,
+      "p50_ms": 2.37,
+      "p95_ms": 3.57,
+      "n_ans/unans/forb": "151/99/80"
+    },
+    {
+      "config": "judge + abstain (1 attempt)",
+      "answer_accuracy": 0.669,
+      "wrongly_abstained": 0.331,
+      "hallucination_unanswerable": 0.01,
+      "answered_forbidden_q(near-miss)": 0.0,
+      "leaked_forbidden_doc": 0,
+      "p50_ms": 2.09,
+      "p95_ms": 3.3,
+      "n_ans/unans/forb": "151/99/80"
+    },
+    {
+      "config": "judge + repair + retry (2 attempts)",
+      "answer_accuracy": 1.0,
+      "wrongly_abstained": 0.0,
+      "hallucination_unanswerable": 0.01,
+      "answered_forbidden_q(near-miss)": 0.013,
+      "leaked_forbidden_doc": 0,
+      "p50_ms": 2.48,
+      "p95_ms": 5.11,
+      "n_ans/unans/forb": "151/99/80"
+    }
+  ]
+}
