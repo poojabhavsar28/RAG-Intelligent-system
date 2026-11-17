@@ -210,6 +210,9 @@ def create_production_app(
     llm: OllamaLLM,
     *,
     daily_quota: int = 10000,
+    rate_per_s: float = 5.0,
+    burst: int = 20,
+    max_inflight: int = 4,
 ) -> FastAPI:
     store = PgTenantStore(engine, embedder)
     sql_retriever = PgHybridRetriever(engine, embedder, audit=True)
@@ -218,7 +221,10 @@ def create_production_app(
         llm,
         ledger=LocalCostLedger(),
     )
-    gateway = RedisGateway(redis_client, daily_quota=daily_quota)
+    gateway = RedisGateway(
+        redis_client, daily_quota=daily_quota, rate_per_s=rate_per_s,
+        burst=burst, max_inflight=max_inflight,
+    )
     app = FastAPI(title="TenantRAG Production API", version="1.0.0")
     app.state.engine = engine
     app.state.redis = redis_client
@@ -458,7 +464,13 @@ def build_app() -> FastAPI:
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")),
     )
-    application = create_production_app(engine, redis_client, embedder, llm)
+    application = create_production_app(
+        engine, redis_client, embedder, llm,
+        daily_quota=int(os.getenv("TENANTRAG_DAILY_REQUEST_QUOTA", "10000")),
+        rate_per_s=float(os.getenv("TENANTRAG_RATE_PER_SECOND", "5")),
+        burst=int(os.getenv("TENANTRAG_RATE_BURST", "20")),
+        max_inflight=int(os.getenv("TENANTRAG_MAX_INFLIGHT", "4")),
+    )
 
     @application.on_event("startup")
     def validate_runtime_role() -> None:
