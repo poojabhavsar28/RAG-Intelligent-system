@@ -249,7 +249,9 @@ def create_production_app(
                 language=body.language, trust_tier=body.trust_tier,
             )
             return result
-        except (ValueError, httpx.HTTPError) as exc:
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail="Local Ollama embedding service is unavailable") from exc
+        except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         finally:
             release_slot(tag)
@@ -287,10 +289,10 @@ def create_production_app(
         try:
             with tenant_transaction(engine, p.tenant_id) as conn:
                 exists = conn.execute(
-                text(
-                    "SELECT 1 FROM documents WHERE tenant_id=:tenant AND external_id=:doc "
-                    "AND status='active' AND deleted_at IS NULL"
-                ),
+                    text(
+                        "SELECT 1 FROM documents WHERE tenant_id=:tenant AND external_id=:doc "
+                        "AND status='active' AND deleted_at IS NULL"
+                    ),
                     {"tenant": p.tenant_id, "doc": body.document_id},
                 ).first()
                 if not exists:
@@ -350,6 +352,23 @@ def build_app() -> FastAPI:
         timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")),
     )
     application = create_production_app(engine, redis_client, embedder, llm)
+
+    @application.on_event("startup")
+    def validate_runtime_role() -> None:
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT r.rolsuper, r.rolbypassrls,
+                       has_table_privilege(current_user, 'public.documents', 'SELECT') AS can_read_documents,
+                       has_function_privilege(
+                           current_user, 'public.lookup_auth_token(text,text,uuid)', 'EXECUTE'
+                       ) AS can_lookup_tokens,
+                       has_table_privilege(current_user, 'public.auth_token_lookup', 'SELECT') AS can_read_token_table
+                FROM pg_roles r WHERE r.rolname = current_user
+            """)).mappings().one()
+        if row["rolsuper"] or row["rolbypassrls"]:
+            raise RuntimeError("TenantRAG API must run with a non-superuser NOBYPASSRLS database role")
+        if not row["can_read_documents"] or not row["can_lookup_tokens"] or row["can_read_token_table"]:
+            raise RuntimeError("TenantRAG runtime role is missing required least-privilege grants")
 
     @application.on_event("shutdown")
     def shutdown_runtime() -> None:
