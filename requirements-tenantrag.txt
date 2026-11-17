@@ -13,5 +13,5 @@ alembic>=1.13,<2.0
 psycopg[binary]>=3.2,<4.0
 pgvector>=0.3,<1.0
 pydantic-settings>=2.0,<3.0
-# optional, imported lazily: sentence-transformers (cross-encoder), google-cloud-aiplatform (Gemini),
-# langchain-ollama (embeddings), opentelemetry-sdk (tracing)
+# Optional: sentence-transformers (cross-encoder), opentelemetry-sdk (tracing).
+# Ollama is accessed through the HTTP API; no provider SDK or cloud credentials are required.
