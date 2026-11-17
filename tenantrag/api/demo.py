@@ -9,12 +9,12 @@ from tenantrag.api.app import create_app, static_token_resolver
 from tenantrag.corpus.simulator import build_corpus
 from tenantrag.doc_store import InMemoryDocStore
 from tenantrag.gateway.limits import Gateway
-from tenantrag.pipeline.llm import build_llm
+from tenantrag.pipeline.llm import ExtractiveLLM, build_llm
 from tenantrag.pipeline.orchestrator import RagPipeline
 from tenantrag.retrieval.hybrid import HybridRetriever
 from tenantrag.retrieval.rerank import OverlapReranker
 from tenantrag.tenancy.router import TenantIndexRouter
-from tenantrag.text import build_embedder
+from tenantrag.text import HashingEmbedder, build_embedder
 
 
 def build():
@@ -27,14 +27,18 @@ def build():
         queries_per_tenant=2,
         seed=1,
     )
-    emb = build_embedder()
+    # The demo remains deterministic/offline for tests. Production runs only
+    # through tenantrag.api.production and always uses Ollama.
+    use_ollama = os.getenv("TENANTRAG_DEMO_USE_OLLAMA", "false").lower() == "true"
+    emb = build_embedder() if use_ollama else HashingEmbedder(128)
+    llm = build_llm() if use_ollama else ExtractiveLLM()
     router = TenantIndexRouter("dedicated", emb)
     router.ingest(corpus.chunks)
     docs = InMemoryDocStore.from_corpus(corpus)
     cache = TenantScopedCache(MemoryBackend(), KeyService(), docs, emb, CacheConfig())
     docs.subscribers.append(cache.on_doc_event)
     retr = HybridRetriever(router, emb, reranker=OverlapReranker(), acl_authority=docs.authority)
-    pipe = RagPipeline(retr, build_llm(), cache=cache)
+    pipe = RagPipeline(retr, llm, cache=cache)
     tokens = {f"demo-{t}": corpus.users[t][0] for t in corpus.tenants}
     for tok, p in list(tokens.items())[:3]:
         print(f"demo token {tok} -> tenant {p.tenant_id}, user {p.user_id}")
