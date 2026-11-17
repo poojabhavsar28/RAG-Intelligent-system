@@ -188,3 +188,93 @@ bench/                reproducible experiments        results/   their committed
 tests/engine/         72 tests                         eval/      CI baseline
 app/ main.py ...      legacy chatbot (kept)
 ```
+
+## Production runtime (PostgreSQL + Redis + Ollama)
+
+The production entry point is **`tenantrag.api.production:app`**. It is separate from
+`tenantrag.api.demo:app`; Docker runs the production entry point and never creates a
+synthetic corpus or prints demo bearer tokens.
+
+### Runtime services
+
+- PostgreSQL 16 + pgvector is the durable document, chunk, ACL, audit, feedback and usage store.
+- The API connects using a dedicated `tenantrag_runtime_login` role that is not a superuser
+  and cannot bypass row-level security. Alembic runs separately with the admin URL.
+- Redis provides atomic shared rate limits, UTC-day request quotas and in-flight limits.
+- Ollama provides local generation (`llama3.2:3b`) and embeddings (`nomic-embed-text`).
+- The production API deliberately starts with answer caching disabled; the existing encrypted
+  in-memory cache is a testable prototype, not a distributed production cache.
+
+### Start locally with Docker Desktop
+
+1. Copy `.env.example` to `.env`. Set two different strong random values for
+   `POSTGRES_PASSWORD` and `POSTGRES_RUNTIME_PASSWORD`. Never commit `.env`.
+2. Start Ollama on the Windows host and download the models:
+
+   ```powershell
+   ollama serve
+   ollama pull llama3.2:3b
+   ollama pull nomic-embed-text
+   ```
+
+3. Start the database, migrations, Redis and API:
+
+   ```powershell
+   docker compose -f docker-compose.tenantrag.yml up --build -d
+   docker compose -f docker-compose.tenantrag.yml ps
+   ```
+
+4. Wait for `http://localhost:8100/healthz` to return `status=ready`. Readiness checks
+   PostgreSQL, Redis and the exact Ollama model tags. The API will return 503 until all are ready.
+
+### Create a tenant and API key
+
+Tenant provisioning is an administrative operation. Run from the repository root after
+installing `requirements-tenantrag.txt`. In PowerShell, set the admin connection string
+to the mapped local database port (do not paste it into source control):
+
+```powershell
+$env:POSTGRES_ADMIN_DATABASE_URL = "postgresql://tenantrag_admin:<ADMIN_PASSWORD>@localhost:5432/tenantrag"
+python scripts/provision_tenant.py --tenant-id acme --name "Acme"
+```
+
+The command prints a high-entropy API key once. Store it in a secret manager. The API stores
+only its SHA-256 hash. Do not put the plaintext key in source code, logs or Git.
+
+### Ingest and ask
+
+Use the key in the `X-Tenant-API-Key` header. Example PowerShell requests:
+
+```powershell
+$headers = @{ "X-Tenant-API-Key" = "<TENANT_API_KEY>" }
+$document = @{
+  external_id = "employee-handbook-v1"
+  title = "Employee handbook"
+  content = "The annual leave allowance is 20 days."
+  language = "en"
+  trust_tier = 1
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "http://localhost:8100/v1/documents" -Headers $headers -ContentType "application/json" -Body $document
+
+$question = @{ query = "How many annual leave days are provided?" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:8100/v1/ask" -Headers $headers -ContentType "application/json" -Body $question
+```
+
+Available endpoints: `GET /livez`, `GET /healthz`, `POST /v1/documents`,
+`POST /v1/ask`, `POST /v1/feedback`, and `GET /v1/usage`.
+
+**Current authorization scope:** tenant API keys are tenant-wide service identities and
+access documents granted to the `tenant_member` role. The production HTTP API does not yet
+expose end-user/group identity provisioning or private-document ACL management. Do not use
+this service-key mode as a substitute for per-user authorization when a tenant requires
+user-specific access. The underlying SQL retrieval path enforces tenant filters and ACLs.
+
+### Production deployment notes
+
+This Compose file is a reproducible single-host deployment baseline, not a claim of
+high availability. Before public internet exposure, configure TLS/reverse proxy, backups and
+restore drills, secret management, network isolation, resource limits, monitoring/alerting,
+and an external identity integration. Redis-backed rate limits are shared across API replicas;
+the current service is intentionally single worker per container. Load-test and tune pool,
+quota and model settings for the target hardware before committing an SLA.
