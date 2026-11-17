@@ -29,7 +29,7 @@ def upgrade() -> None:
     op.execute("""
         GRANT SELECT, INSERT, UPDATE, DELETE ON
             tenants, app_users, sessions, customer_tokens, chat_history, qa_templates,
-            documents, document_chunks, document_acl, auth_token_lookup,
+            documents, document_chunks, document_acl,
             acl_events, audit_log, feedback, usage_ledger
         TO tenantrag_runtime
     """)
