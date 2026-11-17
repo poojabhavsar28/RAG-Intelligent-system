@@ -380,10 +380,23 @@ def create_production_app(
             with tenant_transaction(engine, p.tenant_id) as conn:
                 exists = conn.execute(
                     text(
-                        "SELECT 1 FROM documents WHERE tenant_id=:tenant AND external_id=:doc "
-                        "AND status='active' AND deleted_at IS NULL"
+                        "SELECT 1 FROM documents d WHERE d.tenant_id=:tenant AND d.external_id=:doc "
+                        "AND d.status='active' AND d.deleted_at IS NULL "
+                        "AND EXISTS (SELECT 1 FROM document_acl a WHERE a.tenant_id=d.tenant_id "
+                        "AND a.document_id=d.document_id AND a.permission IN ('read','write','admin') "
+                        "AND ((a.principal_type='user' AND a.principal_id=:uid) "
+                        "OR (a.principal_type='group' AND a.principal_id=ANY(CAST(:gids AS TEXT[]))) "
+                        "OR (a.principal_type='role' AND a.principal_id='tenant_member'))) "
+                        "AND NOT EXISTS (SELECT 1 FROM document_acl x WHERE x.tenant_id=d.tenant_id "
+                        "AND x.document_id=d.document_id AND x.permission='deny' "
+                        "AND ((x.principal_type='user' AND x.principal_id=:uid) "
+                        "OR (x.principal_type='group' AND x.principal_id=ANY(CAST(:gids AS TEXT[])))))"
+
                     ),
-                    {"tenant": p.tenant_id, "doc": body.document_id},
+                    {
+                        "tenant": p.tenant_id, "doc": body.document_id,
+                        "uid": str(p.user_id), "gids": [str(g) for g in p.group_ids],
+                    },
                 ).first()
                 if not exists:
                     raise HTTPException(status_code=404, detail="Document not found")
