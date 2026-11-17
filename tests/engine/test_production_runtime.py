@@ -177,7 +177,7 @@ def test_local_cost_ledger_does_not_claim_cloud_api_spend():
 def test_production_app_has_no_demo_token_or_synthetic_corpus_route():
     app = create_production_app(FakeEngine(), FakeRedis(), FakeEmbedder(), FakeLLM())
     paths = {route.path for route in app.routes}
-    assert {"/livez", "/healthz", "/v1/documents", "/v1/ask", "/v1/feedback", "/v1/usage"} <= paths
+    assert {"/livez", "/healthz", "/v1/documents", "/v1/documents/{external_id}", "/v1/ask", "/v1/feedback", "/v1/usage"} <= paths
     assert "/demo" not in paths
     with TestClient(app) as client:
         assert client.get("/livez").json() == {"status": "alive"}
