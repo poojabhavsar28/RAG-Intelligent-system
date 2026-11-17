@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: tenantrag_admin
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?Set POSTGRES_RUNTIME_PASSWORD}
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./docker/postgres/01-create-runtime-role.sh:/docker-entrypoint-initdb.d/01-create-runtime-role.sh:ro
@@ -19,11 +19,13 @@ services:
       retries: 20
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    ports: ["6379:6379"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"${REDIS_PASSWORD}\""]
+    ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"${REDIS_PASSWORD}\" ping | grep PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -35,12 +37,12 @@ services:
     depends_on: {postgres: {condition: service_healthy}}
   api:
     build: {context: ., dockerfile: Dockerfile.tenantrag}
-    ports: ["8100:8100"]
+    ports: ["127.0.0.1:8100:8100"]
     environment:
       POSTGRES_DATABASE_URL: postgresql://tenantrag_runtime_login:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/tenantrag
       POSTGRES_POOL_SIZE: 10
       POSTGRES_MAX_OVERFLOW: 10
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_LLM_MODEL: llama3.2:3b
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text
