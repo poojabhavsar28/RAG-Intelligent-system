@@ -198,6 +198,23 @@ def create_production_app(
     ) -> Principal:
         return resolve_principal(engine, api_key)
 
+    def acquire_slot(p: Principal) -> str:
+        try:
+            admitted, reason, retry_after, tag = gateway.admit(p.tenant_id)
+        except redis.RedisError as exc:
+            raise HTTPException(status_code=503, detail="Rate-limit service unavailable") from exc
+        if not admitted:
+            raise HTTPException(429, detail=reason, headers={"Retry-After": str(max(1, retry_after))})
+        return tag
+
+    def release_slot(tag: str) -> None:
+        try:
+            gateway.release(tag)
+        except redis.RedisError:
+            # Readiness will fail if Redis remains unavailable. Do not mask an
+            # already completed database/model operation on slot release.
+            pass
+
     @app.get("/livez")
     def live():
         return {"status": "alive"}
@@ -224,6 +241,7 @@ def create_production_app(
 
     @app.post("/v1/documents", status_code=201)
     def ingest(body: IngestIn, p: Principal = Depends(principal)):
+        tag = acquire_slot(p)
         try:
             result = store.ingest_document(
                 p.tenant_id, body.external_id, body.title, body.content,
@@ -233,15 +251,12 @@ def create_production_app(
             return result
         except (ValueError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            release_slot(tag)
 
     @app.post("/v1/ask", response_model=AskOut)
     def ask(body: AskIn, p: Principal = Depends(principal)):
-        try:
-            admitted, reason, retry_after, tag = gateway.admit(p.tenant_id)
-        except redis.RedisError as exc:
-            raise HTTPException(status_code=503, detail="Rate-limit service unavailable") from exc
-        if not admitted:
-            raise HTTPException(429, detail=reason, headers={"Retry-After": str(max(1, retry_after))})
+        tag = acquire_slot(p)
         request_id = uuid.uuid4().hex
         try:
             result = pipeline.answer(p, body.query, body.history)
@@ -264,40 +279,35 @@ def create_production_app(
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=503, detail="Local Ollama inference is unavailable") from exc
         finally:
-            try:
-                gateway.release(tag)
-            except redis.RedisError:
-                # Redis failure is surfaced by readiness checks; do not mask a
-                # successful database/model response while releasing a slot.
-                pass
+            release_slot(tag)
 
     @app.post("/v1/feedback", status_code=204)
     def feedback(body: FeedbackIn, p: Principal = Depends(principal)):
-        with tenant_transaction(engine, p.tenant_id) as conn:
-            exists = conn.execute(
+        tag = acquire_slot(p)
+        try:
+            with tenant_transaction(engine, p.tenant_id) as conn:
+                exists = conn.execute(
                 text(
                     "SELECT 1 FROM documents WHERE tenant_id=:tenant AND external_id=:doc "
                     "AND status='active' AND deleted_at IS NULL"
                 ),
-                {"tenant": p.tenant_id, "doc": body.document_id},
-            ).first()
-            if not exists:
-                raise HTTPException(status_code=404, detail="Document not found")
-            conn.execute(
-                text(
-                    "INSERT INTO feedback (tenant_id, user_id, query, document_id, signal, clicked) "
-                    "VALUES (:tenant, 'tenant-api-key', :query, :doc, :signal, :clicked)"
-                ),
-                {
-                    "tenant": p.tenant_id, "query": body.query, "doc": body.document_id,
-                    "signal": body.signal, "clicked": body.clicked,
-                },
-            )
-        if body.signal < 0:
-            # Persistent cache is deliberately disabled until its storage and
-            # invalidation semantics are implemented against Redis.
-            pass
-        return Response(status_code=204)
+                    {"tenant": p.tenant_id, "doc": body.document_id},
+                ).first()
+                if not exists:
+                    raise HTTPException(status_code=404, detail="Document not found")
+                conn.execute(
+                    text(
+                        "INSERT INTO feedback (tenant_id, user_id, query, document_id, signal, clicked) "
+                        "VALUES (:tenant, :user, :query, :doc, :signal, :clicked)"
+                    ),
+                    {
+                        "tenant": p.tenant_id, "user": str(p.user_id), "query": body.query,
+                        "doc": body.document_id, "signal": body.signal, "clicked": body.clicked,
+                    },
+                )
+            return Response(status_code=204)
+        finally:
+            release_slot(tag)
 
     @app.get("/v1/usage")
     def usage(p: Principal = Depends(principal)):
