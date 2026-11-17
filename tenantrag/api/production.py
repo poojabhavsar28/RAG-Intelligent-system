@@ -10,7 +10,7 @@ import hashlib
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 import redis
@@ -123,6 +123,8 @@ class IngestIn(BaseModel):
     source_uri: str | None = Field(default=None, max_length=2048)
     language: str = Field(default="en", min_length=2, max_length=16)
     trust_tier: int = Field(default=1, ge=1, le=3)
+    visibility: Literal["tenant", "private", "groups"] = "tenant"
+    group_ids: list[int] = Field(default_factory=list, max_length=100)
 
 
 class FeedbackIn(BaseModel):
@@ -163,21 +165,40 @@ def resolve_principal(engine: Engine, raw_key: str | None) -> Principal:
             ).mappings().first()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Authentication service unavailable") from exc
-    if not row or row["subject_id"] != row["tenant_id"]:
+    if not row:
         raise HTTPException(status_code=401, detail="Invalid or expired tenant API key")
+    tenant_id = row["tenant_id"]
+    subject_id = row["subject_id"]
     try:
-        with tenant_transaction(engine, row["tenant_id"]) as conn:
+        with tenant_transaction(engine, tenant_id) as conn:
             tenant_status = conn.execute(
                 text("SELECT status FROM tenants WHERE tenant_id=:tenant"),
-                {"tenant": row["tenant_id"]},
+                {"tenant": tenant_id},
             ).scalar_one_or_none()
+            if tenant_status != "active":
+                raise HTTPException(status_code=403, detail="Tenant is not active")
+            if subject_id == tenant_id:
+                # Tenant service keys can access only tenant-wide documents.
+                return Principal(tenant_id=tenant_id, user_id=0, group_ids=())
+            try:
+                user_id = str(uuid.UUID(subject_id))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise HTTPException(status_code=401, detail="Invalid tenant API key subject") from exc
+            exists = conn.execute(
+                text("SELECT 1 FROM app_users WHERE tenant_id=:tenant AND user_id=:user"),
+                {"tenant": tenant_id, "user": user_id},
+            ).first()
+            if not exists:
+                raise HTTPException(status_code=401, detail="User identity is not active in this tenant")
+            groups = conn.execute(
+                text("SELECT group_id FROM app_user_groups WHERE tenant_id=:tenant AND user_id=:user"),
+                {"tenant": tenant_id, "user": user_id},
+            ).scalars().all()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Tenant identity service unavailable") from exc
-    if tenant_status != "active":
-        raise HTTPException(status_code=403, detail="Tenant is not active")
-    # Tenant service keys intentionally carry no user/group identity. They can
-    # access documents granted to the tenant_member role, never user/group ACLs.
-    return Principal(tenant_id=row["tenant_id"], user_id=0, group_ids=())
+    return Principal(tenant_id=tenant_id, user_id=user_id, group_ids=tuple(int(g) for g in groups))
 
 
 def create_production_app(
@@ -253,9 +274,36 @@ def create_production_app(
     def ingest(body: IngestIn, p: Principal = Depends(principal)):
         tag = acquire_slot(p)
         try:
+            if body.visibility == "tenant":
+                if body.group_ids:
+                    raise HTTPException(status_code=422, detail="group_ids are only valid for groups visibility")
+                policy = Acl(is_public=True)
+            elif p.user_id == 0:
+                raise HTTPException(status_code=403, detail="User-bound API key required for private or group documents")
+            elif body.visibility == "private":
+                if body.group_ids:
+                    raise HTTPException(status_code=422, detail="group_ids are only valid for groups visibility")
+                policy = Acl(allow_users=frozenset({p.user_id}))
+            else:
+                if not body.group_ids or len(set(body.group_ids)) != len(body.group_ids):
+                    raise HTTPException(status_code=422, detail="groups visibility requires unique group_ids")
+                with tenant_transaction(engine, p.tenant_id) as conn:
+                    memberships = conn.execute(
+                        text(
+                            "SELECT group_id FROM app_user_groups "
+                            "WHERE tenant_id=:tenant AND user_id=:user AND group_id=ANY(:groups)"
+                        ),
+                        {"tenant": p.tenant_id, "user": str(p.user_id), "groups": body.group_ids},
+                    ).scalars().all()
+                if set(int(g) for g in memberships) != set(body.group_ids):
+                    raise HTTPException(status_code=403, detail="You may share only with groups you belong to")
+                policy = Acl(
+                    allow_users=frozenset({p.user_id}),
+                    allow_groups=frozenset(body.group_ids),
+                )
             result = store.ingest_document(
                 p.tenant_id, body.external_id, body.title, body.content,
-                acl=Acl(is_public=True), source_uri=body.source_uri,
+                acl=policy, source_uri=body.source_uri,
                 language=body.language, trust_tier=body.trust_tier,
             )
             return result
@@ -369,6 +417,7 @@ def build_app() -> FastAPI:
             row = conn.execute(text("""
                 SELECT r.rolsuper, r.rolbypassrls,
                        has_table_privilege(current_user, 'public.documents', 'SELECT') AS can_read_documents,
+                       has_table_privilege(current_user, 'public.app_user_groups', 'SELECT') AS can_read_memberships,
                        has_function_privilege(
                            current_user, 'public.lookup_auth_token(text,text,uuid)', 'EXECUTE'
                        ) AS can_lookup_tokens,
@@ -377,7 +426,10 @@ def build_app() -> FastAPI:
             """)).mappings().one()
         if row["rolsuper"] or row["rolbypassrls"]:
             raise RuntimeError("TenantRAG API must run with a non-superuser NOBYPASSRLS database role")
-        if not row["can_read_documents"] or not row["can_lookup_tokens"] or row["can_read_token_table"]:
+        if (
+            not row["can_read_documents"] or not row["can_read_memberships"]
+            or not row["can_lookup_tokens"] or row["can_read_token_table"]
+        ):
             raise RuntimeError("TenantRAG runtime role is missing required least-privilege grants")
 
     @application.on_event("shutdown")
