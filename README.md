@@ -251,9 +251,25 @@ CREATE ROLE tenantrag_runtime_login LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '<RUN
 GRANT tenantrag_runtime TO tenantrag_runtime_login;
 ```
 
+### Optional: user and group identities
+
+For user-level access, create user-bound API keys with stable identity-provider subject IDs
+(do not use email addresses as the subject). Then create groups and attach users:
+
+```powershell
+python scripts/provision_user.py --tenant-id acme --external-subject "idp-subject-001"
+python scripts/provision_group.py --tenant-id acme --name "HR" --external-subject "idp-subject-001" --external-subject "idp-subject-002"
+```
+
+Both scripts require the admin connection string and write only token hashes. Keep the
+printed user key in a secret manager. Group IDs are tenant-scoped and should be obtained
+from the provisioning result.
+
 ### Ingest and ask
 
-Use the key in the `X-Tenant-API-Key` header. Example PowerShell requests:
+Use the key in the `X-Tenant-API-Key` header. Tenant-wide documents use the default
+`visibility: "tenant"`. A user-bound key may instead submit `visibility: "private"`
+or `visibility: "groups"` with group IDs the user belongs to. Example PowerShell requests:
 
 ```powershell
 $headers = @{ "X-Tenant-API-Key" = "<TENANT_API_KEY>" }
@@ -274,11 +290,11 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8100/v1/ask" -Headers $hea
 Available endpoints: `GET /livez`, `GET /healthz`, `POST /v1/documents`,
 `POST /v1/ask`, `POST /v1/feedback`, and `GET /v1/usage`.
 
-**Current authorization scope:** tenant API keys are tenant-wide service identities and
-access documents granted to the `tenant_member` role. The production HTTP API does not yet
-expose end-user/group identity provisioning or private-document ACL management. Do not use
-this service-key mode as a substitute for per-user authorization when a tenant requires
-user-specific access. The underlying SQL retrieval path enforces tenant filters and ACLs.
+**Authorization:** tenant service keys access documents granted to the `tenant_member` role.
+For user-specific access, provision user-bound keys and group membership using the admin-only
+scripts below. Private documents are visible only to their owner; group documents are visible
+to the owner and members of the selected tenant groups. Every SQL retrieval applies tenant
+filters and authoritative ACL checks. The tenant service key cannot read private/group-only docs.
 
 ### Production deployment notes
 
