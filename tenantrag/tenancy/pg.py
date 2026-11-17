@@ -21,7 +21,7 @@ from app.infrastructure.postgres.tenant_db import tenant_transaction
 from tenantrag.corpus.simulator import Corpus
 from tenantrag.retrieval.fusion import reciprocal_rank_fusion
 from tenantrag.retrieval.hybrid import RetrievalResult
-from tenantrag.text import Embedder, tokenize
+from tenantrag.text import Embedder, chunk_by_tokens, tokenize
 from tenantrag.types import Acl, Chunk, Hit, Principal
 
 _NS = uuid.UUID("6f1d5c0e-7a54-4e0c-9d2e-3b1d9a5f0c11")
@@ -44,6 +44,7 @@ def _acl_rows(tenant_id: str, doc: uuid.UUID, acl: Acl) -> list[dict]:
 
 _ACL_SQL = """
   AND d.status = 'active' AND d.deleted_at IS NULL
+  AND d.trust_tier >= 1 AND d.injection_state = 'clean'
   AND EXISTS (
         SELECT 1 FROM document_acl a
         WHERE a.tenant_id = c.tenant_id AND a.document_id = c.document_id
@@ -144,6 +145,119 @@ class PgTenantStore:
                     )
                     total += len(part)
         return total
+
+    def ingest_document(
+        self,
+        tenant_id: str,
+        external_id: str,
+        title: str,
+        content: str,
+        *,
+        acl: Acl | None = None,
+        source_uri: str | None = None,
+        language: str = "en",
+        max_chunk_tokens: int = 400,
+        overlap: int = 60,
+        trust_tier: int = 1,
+    ) -> dict:
+        """Atomically upsert one tenant document and its embedded chunks.
+
+        Embeddings are computed before opening the database transaction. The document is
+        visible only after every chunk and ACL row has been committed successfully.
+        """
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("tenant_id is required")
+        if not external_id or not external_id.strip():
+            raise ValueError("external_id is required")
+        if not title or not title.strip():
+            raise ValueError("title is required")
+        if not content or not content.strip():
+            raise ValueError("content is required")
+        if trust_tier not in (1, 2, 3):
+            raise ValueError("trust_tier must be 1, 2 or 3")
+
+        parts = chunk_by_tokens(content, max_tokens=max_chunk_tokens, overlap=overlap)
+        if not parts:
+            raise ValueError("document has no indexable content")
+        vectors = self.embedder.embed(parts)
+        if vectors.shape != (len(parts), 768) or not np.isfinite(vectors).all():
+            raise ValueError("embedder returned invalid vectors for pgvector(768)")
+
+        doc = doc_uuid(tenant_id, external_id)
+        checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        policy = acl or Acl(is_public=True)
+        suspect = any(__import__("tenantrag.security.guards", fromlist=["is_suspect"]).is_suspect(p) for p in parts)
+        chunk_rows = []
+        for ordinal, (part, vector) in enumerate(zip(parts, vectors)):
+            chunk_rows.append({
+                "t": tenant_id,
+                "cid": uuid.uuid5(_NS, f"{tenant_id}/chunk/{external_id}/{ordinal}"),
+                "d": doc,
+                "o": ordinal,
+                "txt": part,
+                "h": hashlib.sha256(part.encode("utf-8")).hexdigest(),
+                "lang": language,
+                "emb": vector.tolist(),
+                "n": len(tokenize(part)),
+            })
+
+        insert_chunk = text(
+            "INSERT INTO document_chunks (tenant_id, chunk_id, document_id, ordinal, content, "
+            "content_hash, language, embedding, token_count) "
+            "VALUES (:t, :cid, :d, :o, :txt, :h, :lang, :emb, :n)"
+        ).bindparams(bindparam("emb", type_=Vector(768)))
+
+        with tenant_transaction(self.engine, tenant_id) as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO documents (tenant_id, document_id, external_id, title, source_uri, "
+                    "checksum, language, status, trust_tier, injection_state) "
+                    "VALUES (:t, :d, :x, :title, :uri, :checksum, :lang, 'pending', :trust, :injection) "
+                    "ON CONFLICT (tenant_id, document_id) DO UPDATE SET "
+                    "external_id=EXCLUDED.external_id, title=EXCLUDED.title, source_uri=EXCLUDED.source_uri, "
+                    "checksum=EXCLUDED.checksum, language=EXCLUDED.language, status='pending', "
+                    "deleted_at=NULL, trust_tier=EXCLUDED.trust_tier, injection_state=EXCLUDED.injection_state, "
+                    "acl_version=documents.acl_version+1, updated_at=now()"
+                ),
+                {
+                    "t": tenant_id, "d": doc, "x": external_id, "title": title, "uri": source_uri,
+                    "checksum": checksum, "lang": language, "trust": trust_tier,
+                    "injection": "suspect" if suspect else "clean",
+                },
+            )
+            conn.execute(
+                text("DELETE FROM document_chunks WHERE tenant_id=:t AND document_id=:d"),
+                {"t": tenant_id, "d": doc},
+            )
+            conn.execute(
+                text("DELETE FROM document_acl WHERE tenant_id=:t AND document_id=:d"),
+                {"t": tenant_id, "d": doc},
+            )
+            acl_rows = _acl_rows(tenant_id, doc, policy)
+            if acl_rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO document_acl (tenant_id, document_id, principal_type, principal_id, permission) "
+                        "VALUES (:t, :d, :pt, :pi, :perm)"
+                    ),
+                    acl_rows,
+                )
+            conn.execute(insert_chunk, chunk_rows)
+            conn.execute(
+                text(
+                    "UPDATE documents SET status='active', updated_at=now() "
+                    "WHERE tenant_id=:t AND document_id=:d"
+                ),
+                {"t": tenant_id, "d": doc},
+            )
+
+        return {
+            "document_id": external_id,
+            "checksum": checksum,
+            "chunks": len(chunk_rows),
+            "status": "active",
+            "injection_suspect": suspect,
+        }
 
     def set_acl(self, tenant_id: str, doc_id: str, acl: Acl) -> int:
         """Replace a document's ACL atomically, bump acl_version, emit an outbox event.
