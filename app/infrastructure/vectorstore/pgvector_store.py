@@ -75,6 +75,21 @@ class PgVectorRetriever:
                                  AND acl.principal_id = ANY(CAST(:role_ids AS TEXT[])))
                           )
                     )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM document_acl AS denied
+                        WHERE denied.tenant_id = c.tenant_id
+                          AND denied.document_id = c.document_id
+                          AND denied.permission = 'deny'
+                          AND (
+                                (denied.principal_type = 'user'
+                                 AND denied.principal_id = :user_id)
+                             OR (denied.principal_type = 'group'
+                                 AND denied.principal_id = ANY(CAST(:group_ids AS TEXT[])))
+                             OR (denied.principal_type = 'role'
+                                 AND denied.principal_id = ANY(CAST(:role_ids AS TEXT[])))
+                          )
+                    )
               )
             ORDER BY c.embedding <=> :embedding
             LIMIT :limit
