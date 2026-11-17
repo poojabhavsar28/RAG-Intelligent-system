@@ -102,7 +102,7 @@ def test_redis_gateway_uses_atomic_shared_admission_and_release():
     assert admitted and reason == "ok" and retry == 0
     script, numkeys, args = client.calls[0]
     assert numkeys == 3
-    assert "INCR" in script and "inflight" not in script  # inflight is an atomic Redis key
+    assert "INCR" in script and "max_inflight" in script and "daily_quota" in script
     assert args[0].startswith("trag:{")
     gateway.release(tag)
     assert len(client.calls) == 2
