@@ -160,7 +160,7 @@ pip install -r requirements-tenantrag.txt
 export POSTGRES_DATABASE_URL=postgresql://USER:PASS@localhost:5432/tenantrag
 alembic -c alembic-postgres.ini upgrade head
 
-pytest -q tests/engine                       # 72 tests (PG tests need POSTGRES_DATABASE_URL)
+pytest -q tests/engine                       # unit + integration tests (PG tests need POSTGRES_DATABASE_URL)
 python -m tenantrag.eval.gate                # CI quality gate (compares to eval/baseline.json)
 python bench/tenancy_scaling.py              # tenancy models, 10/100/1000 tenants
 python bench/pg_filtered_recall.py           # real pgvector filtered-ANN recall
@@ -179,7 +179,7 @@ tenantrag/            engine: types, text, doc_store, corpus/, eval/, retrieval/
                       cache/, gateway/, security/, adaptation/, observability/, api/
 alembic_postgres/     migrations (pg0005 adds tsvector, policy columns, audit, feedback, usage, ACL outbox, deny)
 bench/                reproducible experiments        results/   their committed outputs
-tests/engine/         72 tests                         eval/      CI baseline
+tests/engine/         unit + integration coverage     eval/      CI baseline
 app/ main.py ...      legacy chatbot (kept)
 ```
 
