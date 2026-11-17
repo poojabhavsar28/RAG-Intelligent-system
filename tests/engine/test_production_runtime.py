@@ -127,7 +127,7 @@ def test_user_api_key_resolves_uuid_and_tenant_group_memberships():
 
     user_id = str(uuid.uuid4())
     engine = FakeEngine(
-        {"tenant_id": "tenant-a", "subject_id": user_id},
+        {"tenant_id": "tenant-a", "subject_id": "user:" + user_id},
         user_exists=True,
         groups=[17, 29],
     )
