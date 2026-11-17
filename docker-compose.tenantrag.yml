@@ -34,6 +34,13 @@ services:
       POSTGRES_DATABASE_URL: postgresql://tenantrag:${POSTGRES_PASSWORD}@postgres:5432/tenantrag
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      TENANTRAG_LLM_PROVIDER: ollama
+      TENANTRAG_EMBEDDING_PROVIDER: ollama
+      OLLAMA_LLM_MODEL: llama3.2:3b
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on: {migrate: {condition: service_completed_successfully}, redis: {condition: service_started}}
 volumes:
   pg_data:
