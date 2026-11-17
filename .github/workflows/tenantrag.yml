@@ -1,0 +1,36 @@
+name: tenantrag-quality
+on:
+  pull_request:
+  push:
+    branches: [main, "feature/**"]
+jobs:
+  test-and-gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: {POSTGRES_USER: tenantrag, POSTGRES_PASSWORD: ci-password, POSTGRES_DB: tenantrag}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tenantrag" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      POSTGRES_DATABASE_URL: postgresql://tenantrag:ci-password@localhost:5432/tenantrag
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements-tenantrag.txt
+      - name: Enable pgvector and migrate
+        run: |
+          PGPASSWORD=ci-password psql -h localhost -U tenantrag -d tenantrag -c "CREATE EXTENSION IF NOT EXISTS vector"
+          alembic -c alembic-postgres.ini upgrade head
+      - name: Unit + integration tests (isolation, ACL, cache, security, PG backend)
+        run: pytest -q tests/engine
+      - name: Retrieval quality gate (fails the PR on regression or any leak)
+        run: python -m tenantrag.eval.gate
+      - name: Cache layer-ablation leak test (all rows must behave as expected)
+        run: python bench/cache_leak_ablation.py --check
