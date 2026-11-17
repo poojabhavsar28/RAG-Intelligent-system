@@ -21,6 +21,7 @@ from app.infrastructure.postgres.tenant_db import tenant_transaction
 from tenantrag.corpus.simulator import Corpus
 from tenantrag.retrieval.fusion import reciprocal_rank_fusion
 from tenantrag.retrieval.hybrid import RetrievalResult
+from tenantrag.security.guards import is_suspect
 from tenantrag.text import Embedder, chunk_by_tokens, tokenize
 from tenantrag.types import Acl, Chunk, Hit, Principal
 
@@ -162,7 +163,8 @@ class PgTenantStore:
     ) -> dict:
         """Atomically upsert one tenant document and its embedded chunks.
 
-        Embeddings are computed before opening the database transaction. The document is
+        Chunk boundaries are whitespace-word based (not an exact model tokenizer). Embeddings
+        are computed before opening the database transaction. The document is
         visible only after every chunk and ACL row has been committed successfully.
         """
         if not tenant_id or not tenant_id.strip():
@@ -186,7 +188,7 @@ class PgTenantStore:
         doc = doc_uuid(tenant_id, external_id)
         checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
         policy = acl or Acl(is_public=True)
-        suspect = any(__import__("tenantrag.security.guards", fromlist=["is_suspect"]).is_suspect(p) for p in parts)
+        suspect = any(is_suspect(part) for part in parts)
         chunk_rows = []
         for ordinal, (part, vector) in enumerate(zip(parts, vectors)):
             chunk_rows.append({
