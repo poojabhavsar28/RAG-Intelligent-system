@@ -171,7 +171,11 @@ python bench/adaptation.py                   # per-tenant adaptation
 ollama pull llama3.2:3b && ollama pull nomic-embed-text  # local model setup
 # Set TENANTRAG_LLM_PROVIDER=ollama and TENANTRAG_EMBEDDING_PROVIDER=ollama (defaults)
 uvicorn tenantrag.api.demo:app --port 8100   # demo API (prints demo bearer tokens)
-# Start Ollama on the host first, then pull both models (the API container uses host.docker.internal)\nollama serve\nollama pull llama3.2:3b\nollama pull nomic-embed-text\ndocker compose -f docker-compose.tenantrag.yml up --build
+# Start Ollama on the host first, then pull both models (the API container uses host.docker.internal)
+ollama serve
+ollama pull llama3.2:3b
+ollama pull nomic-embed-text
+docker compose -f docker-compose.tenantrag.yml up --build
 ```
 CI (`.github/workflows/tenantrag.yml`) runs the tests, the quality gate (fails the PR on a quality regression or any leak) and the cache leak ablation. Latency is reported but never gated (shared runners are too noisy).
 
