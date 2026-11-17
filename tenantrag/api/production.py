@@ -23,6 +23,7 @@ from app.infrastructure.postgres.tenant_db import tenant_transaction
 from tenantrag.observability.cost import CostLedger
 from tenantrag.pipeline.llm import OllamaLLM
 from tenantrag.pipeline.orchestrator import RagPipeline
+from tenantrag.retrieval.rerank import OverlapReranker
 from tenantrag.tenancy.pg import PgHybridRetriever, PgTenantStore
 from tenantrag.text import OllamaEmbedder
 from tenantrag.types import Acl, Principal
@@ -136,9 +137,15 @@ class PipelineRetriever:
 
     def __init__(self, backend: PgHybridRetriever):
         self.backend = backend
+        self.reranker = OverlapReranker()
 
     def retrieve(self, principal: Principal, query: str, k: int = 10, *, rerank: bool = True):
-        return self.backend.retrieve(principal, query, k)
+        result = self.backend.retrieve(principal, query, max(k, 20))
+        if rerank and result.hits:
+            result.hits = self.reranker.rerank(query, result.hits)[:k]
+        else:
+            result.hits = result.hits[:k]
+        return result
 
 
 def resolve_principal(engine: Engine, raw_key: str | None) -> Principal:
