@@ -180,8 +180,10 @@ def resolve_principal(engine: Engine, raw_key: str | None) -> Principal:
             if subject_id == tenant_id:
                 # Tenant service keys can access only tenant-wide documents.
                 return Principal(tenant_id=tenant_id, user_id=0, group_ids=())
+            if not isinstance(subject_id, str) or not subject_id.startswith("user:"):
+                raise HTTPException(status_code=401, detail="Invalid tenant API key subject")
             try:
-                user_id = str(uuid.UUID(subject_id))
+                user_id = str(uuid.UUID(subject_id.removeprefix("user:")))
             except (ValueError, TypeError, AttributeError) as exc:
                 raise HTTPException(status_code=401, detail="Invalid tenant API key subject") from exc
             exists = conn.execute(
