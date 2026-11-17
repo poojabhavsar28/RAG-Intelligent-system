@@ -1,6 +1,8 @@
-"""LLM interface. ``ExtractiveLLM`` is a deterministic, offline stand-in used by tests and
-benchmarks (it quotes the best-matching sentence and cites it), so pipeline logic can be
-measured without model variance. ``GeminiLLM`` is the production adapter (Vertex AI)."""
+"""LLM interface. OllamaLLM is the supported local inference adapter.
+
+ExtractiveLLM is a deterministic offline stand-in for tests and synthetic benchmarks;
+it is never selected by the production API. Gemini and Vertex AI are not dependencies.
+"""
 from __future__ import annotations
 
 import re
