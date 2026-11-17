@@ -142,7 +142,7 @@ Tenant A sends 2,000 req/s, tenant B sends 20 req/s, shared pool of 4 workers.
 Built and tested: tenancy router (3 modes), Postgres hybrid retriever (dense + tsvector, RLS, ACL with deny), ACL admin with outbox, Qdrant payload-multitenancy adapter (tested in local in-memory mode only), hybrid retrieval + RRF + rerank, router/rewrite/decompose, self-check loop, guardrails, PII redaction, injection detector, audit log, 7-layer cache (memory + real Redis), gateway, cost ledger, adaptation, FastAPI `/v2`, Docker/compose, CI gate.
 
 Not done or not verified:
-- **Gemini/Vertex generation and the Hugging Face cross-encoder are adapters that were never run** (no credentials/model downloads in the build environment). All generation results use the deterministic `ExtractiveLLM`.
+- **Ollama is the supported local LLM and embedding provider.** The default runtime uses `llama3.2:3b` for generation and `nomic-embed-text` for embeddings through Ollama's local HTTP API. No Gemini, Vertex AI, cloud credentials, or paid LLM API are required. The deterministic `ExtractiveLLM` and `HashingEmbedder` remain explicit test/benchmark options, not production defaults. The Hugging Face cross-encoder remains optional and must be validated separately.
 - **Embeddings are a hashing n-gram model.** No semantic or cross-lingual retrieval was evaluated; Hindi/Gujarati support is limited to tokenization, `simple` tsvector config, injection patterns and cache exact-only fallback.
 - **No BEIR or multilingual benchmark run**, and no real public corpus (a directory loader exists: `load_directory_corpus`).
 - **Qdrant server, pgvector ≥ 0.8 iterative scans, and a Postgres partition-promotion benchmark were not run.** The `document_versions` / version-swap / `chunk_vectors_*` schema from the design notes is **not** implemented; this repo extends the existing schema with migration `pg0005`.
@@ -168,7 +168,7 @@ python bench/ablations.py                    # retrieval + self-check ablations
 python bench/cache_leak_ablation.py --check  # cache layer-ablation leak test
 python bench/noisy_neighbor.py               # noisy-neighbor experiment
 python bench/adaptation.py                   # per-tenant adaptation
-uvicorn tenantrag.api.demo:app --port 8100   # demo API (prints demo bearer tokens)
+ollama pull llama3.2:3b && ollama pull nomic-embed-text  # local model setup\n# Set TENANTRAG_LLM_PROVIDER=ollama and TENANTRAG_EMBEDDING_PROVIDER=ollama (defaults)\nuvicorn tenantrag.api.demo:app --port 8100   # demo API (prints demo bearer tokens)
 docker compose -f docker-compose.tenantrag.yml up --build   # full stack
 ```
 CI (`.github/workflows/tenantrag.yml`) runs the tests, the quality gate (fails the PR on a quality regression or any leak) and the cache leak ablation. Latency is reported but never gated (shared runners are too noisy).
