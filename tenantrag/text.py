@@ -134,6 +134,23 @@ class OllamaEmbedder:
             self._client.close()
 
 
+def chunk_by_tokens(text: str, max_tokens: int = 120, overlap: int = 20) -> list[str]:
+    """Simple whitespace-token chunker used by ingestion when no structure is known."""
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be >= 1")
+    if overlap < 0 or overlap >= max_tokens:
+        raise ValueError("overlap must be >= 0 and smaller than max_tokens")
+    words = text.split()
+    if len(words) <= max_tokens:
+        return [text.strip()] if text.strip() else []
+    step = max_tokens - overlap
+    return [
+        " ".join(words[i : i + max_tokens])
+        for i in range(0, len(words), step)
+        if words[i : i + max_tokens]
+    ]
+
+
 def build_embedder(provider: str | None = None) -> Embedder:
     """Build the configured embedder. Ollama is default; hashing is deterministic test-only."""
     import os
