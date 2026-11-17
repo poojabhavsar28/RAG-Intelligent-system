@@ -1,47 +1,56 @@
-# Full TenantRAG stack: Postgres+pgvector (system of record), Qdrant (comparison backend),
-# Redis (cache + rate-limit state), and the API.  docker compose -f docker-compose.tenantrag.yml up --build
+# Persistent TenantRAG runtime. Postgres migrations run with the admin role;
+# the API uses a separate NOLOGIN/NOBYPASSRLS privilege group via runtime login.
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: tenantrag
-      POSTGRES_USER: tenantrag
+      POSTGRES_USER: tenantrag_admin
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?Set POSTGRES_RUNTIME_PASSWORD}
     ports: ["5432:5432"]
-    volumes: [pg_data:/var/lib/postgresql/data]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/01-create-runtime-role.sh:/docker-entrypoint-initdb.d/01-create-runtime-role.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tenantrag -d tenantrag"]
+      test: ["CMD-SHELL", "pg_isready -U tenantrag_admin -d tenantrag"]
       interval: 5s
+      timeout: 5s
       retries: 20
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports: ["6333:6333"]
-    volumes: [qdrant_data:/qdrant/storage]
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--appendonly", "yes"]
     ports: ["6379:6379"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   migrate:
     build: {context: ., dockerfile: Dockerfile.tenantrag}
     command: ["alembic", "-c", "alembic-postgres.ini", "upgrade", "head"]
     environment:
-      POSTGRES_DATABASE_URL: postgresql://tenantrag:${POSTGRES_PASSWORD}@postgres:5432/tenantrag
+      POSTGRES_ADMIN_DATABASE_URL: postgresql://tenantrag_admin:${POSTGRES_PASSWORD}@postgres:5432/tenantrag
     depends_on: {postgres: {condition: service_healthy}}
   api:
     build: {context: ., dockerfile: Dockerfile.tenantrag}
     ports: ["8100:8100"]
     environment:
-      POSTGRES_DATABASE_URL: postgresql://tenantrag:${POSTGRES_PASSWORD}@postgres:5432/tenantrag
+      POSTGRES_DATABASE_URL: postgresql://tenantrag_runtime_login:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/tenantrag
+      POSTGRES_POOL_SIZE: 10
+      POSTGRES_MAX_OVERFLOW: 10
       REDIS_URL: redis://redis:6379/0
-      QDRANT_URL: http://qdrant:6333
       OLLAMA_BASE_URL: http://host.docker.internal:11434
-      TENANTRAG_LLM_PROVIDER: ollama
-      TENANTRAG_EMBEDDING_PROVIDER: ollama
       OLLAMA_LLM_MODEL: llama3.2:3b
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+      OLLAMA_EMBEDDING_DIM: 768
+      OLLAMA_TIMEOUT_SECONDS: 120
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on: {migrate: {condition: service_completed_successfully}, redis: {condition: service_started}}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
 volumes:
   pg_data:
-  qdrant_data:
+  redis_data:
