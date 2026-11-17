@@ -49,7 +49,9 @@ def test_ollama_embedder_batches_and_normalizes():
     assert matrix.shape == (3, 2)
     assert np.allclose(np.linalg.norm(matrix, axis=1), 1.0)
     assert [len(x) for x in calls] == [2, 1]
+    assert calls[0][0] == "search_document: a"
     assert np.allclose(emb.embed_query("q"), [0.6, 0.8])
+    assert calls[-1] == ["search_query: q"]
     client.close()
 
 
