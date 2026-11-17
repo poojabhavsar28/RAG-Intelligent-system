@@ -90,6 +90,8 @@ class OllamaEmbedder:
         base_url: str = "http://localhost:11434",
         timeout: float = 120.0,
         client=None,
+        document_prefix: str = "search_document: ",
+        query_prefix: str = "search_query: ",
     ):
         import httpx
 
@@ -98,6 +100,8 @@ class OllamaEmbedder:
         self.model = model
         self.dim = dim
         self._batch = batch
+        self.document_prefix = document_prefix
+        self.query_prefix = query_prefix
         self.base_url = base_url.rstrip("/")
         self._client = client or httpx.Client(timeout=timeout)
         self._owns_client = client is None
@@ -109,7 +113,10 @@ class OllamaEmbedder:
         for i in range(0, len(texts), self._batch):
             response = self._client.post(
                 f"{self.base_url}/api/embed",
-                json={"model": self.model, "input": list(texts[i : i + self._batch])},
+                json={
+                    "model": self.model,
+                    "input": [self.document_prefix + value for value in texts[i : i + self._batch]],
+                },
             )
             response.raise_for_status()
             payload = response.json()
@@ -127,7 +134,21 @@ class OllamaEmbedder:
         return arr / np.where(norms == 0, 1, norms)
 
     def embed_query(self, text: str) -> np.ndarray:
-        return self.embed([text])[0]
+        # Nomic's retrieval instruction prefixes distinguish query and document vectors.
+        response = self._client.post(
+            f"{self.base_url}/api/embed",
+            json={"model": self.model, "input": [self.query_prefix + text]},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("embeddings")
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise RuntimeError("Ollama returned an invalid query embedding")
+        arr = np.asarray(rows, dtype=np.float32)
+        if arr.shape != (1, self.dim) or not np.isfinite(arr).all():
+            raise ValueError(f"Ollama query embedding dimension mismatch: expected {self.dim}")
+        norm = np.linalg.norm(arr, axis=1, keepdims=True)
+        return (arr / np.where(norm == 0, 1, norm))[0]
 
     def close(self) -> None:
         if self._owns_client:
