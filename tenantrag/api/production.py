@@ -165,6 +165,16 @@ def resolve_principal(engine: Engine, raw_key: str | None) -> Principal:
         raise HTTPException(status_code=503, detail="Authentication service unavailable") from exc
     if not row or row["subject_id"] != row["tenant_id"]:
         raise HTTPException(status_code=401, detail="Invalid or expired tenant API key")
+    try:
+        with tenant_transaction(engine, row["tenant_id"]) as conn:
+            tenant_status = conn.execute(
+                text("SELECT status FROM tenants WHERE tenant_id=:tenant"),
+                {"tenant": row["tenant_id"]},
+            ).scalar_one_or_none()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Tenant identity service unavailable") from exc
+    if tenant_status != "active":
+        raise HTTPException(status_code=403, detail="Tenant is not active")
     # Tenant service keys intentionally carry no user/group identity. They can
     # access documents granted to the tenant_member role, never user/group ACLs.
     return Principal(tenant_id=row["tenant_id"], user_id=0, group_ids=())
