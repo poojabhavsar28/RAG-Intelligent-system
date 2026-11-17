@@ -7,6 +7,7 @@ COPY app ./app
 COPY tenantrag ./tenantrag
 COPY alembic_postgres ./alembic_postgres
 COPY alembic-postgres.ini .
+COPY scripts ./scripts
 EXPOSE 8100
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=3)"
 CMD ["uvicorn", "tenantrag.api.production:app", "--host", "0.0.0.0", "--port", "8100", "--workers", "1"]
