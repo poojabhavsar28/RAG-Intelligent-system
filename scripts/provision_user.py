@@ -37,7 +37,7 @@ def provision(tenant_id: str, external_subject: str) -> tuple[str, str]:
                 INSERT INTO auth_token_lookup
                     (token_hash, token_type, tenant_id, subject_id)
                 VALUES (:hash, 'tenant_api_key', :tenant, :subject)
-            """), {"hash": token_hash, "tenant": tenant_id, "subject": str(user_id)})
+            """), {"hash": token_hash, "tenant": tenant_id, "subject": "user:" + str(user_id)})
         return str(user_id), raw_key
     finally:
         engine.dispose()
