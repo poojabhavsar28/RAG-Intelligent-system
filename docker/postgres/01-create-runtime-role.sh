@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+: "${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD must be set}"
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -v runtime_password="$POSTGRES_RUNTIME_PASSWORD" <<'SQL'
+CREATE ROLE tenantrag_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+CREATE ROLE tenantrag_runtime_login LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD :'runtime_password';
+GRANT tenantrag_runtime TO tenantrag_runtime_login;
+SQL

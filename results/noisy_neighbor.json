@@ -1,0 +1,20 @@
+[
+  {
+    "config": "no_limits",
+    "B_p50_ms": 6180.8,
+    "B_p95_ms": 11747.7,
+    "B_served": 80,
+    "B_rejected": 0,
+    "A_served": 8000,
+    "A_rejected": 0
+  },
+  {
+    "config": "gateway",
+    "B_p50_ms": 8.2,
+    "B_p95_ms": 8.3,
+    "B_served": 80,
+    "B_rejected": 0,
+    "A_served": 299,
+    "A_rejected": 7701
+  }
+]

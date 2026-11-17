@@ -1,0 +1,65 @@
+# Persistent TenantRAG runtime. Postgres migrations run with the admin role;
+# the API uses a separate NOLOGIN/NOBYPASSRLS privilege group via runtime login.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: tenantrag
+      POSTGRES_USER: tenantrag_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?Set POSTGRES_RUNTIME_PASSWORD}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/01-create-runtime-role.sh:/docker-entrypoint-initdb.d/01-create-runtime-role.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tenantrag_admin -d tenantrag"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    command: ["sh", "/usr/local/bin/redis-entrypoint.sh"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/entrypoint.sh:/usr/local/bin/redis-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: {context: ., dockerfile: Dockerfile.tenantrag}
+    command: ["alembic", "-c", "alembic-postgres.ini", "upgrade", "head"]
+    environment:
+      POSTGRES_ADMIN_DATABASE_URL: postgresql://tenantrag_admin:${POSTGRES_PASSWORD}@postgres:5432/tenantrag
+    depends_on: {postgres: {condition: service_healthy}}
+  api:
+    build: {context: ., dockerfile: Dockerfile.tenantrag}
+    ports: ["127.0.0.1:8100:8100"]
+    environment:
+      POSTGRES_DATABASE_URL: postgresql://tenantrag_runtime_login:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/tenantrag
+      POSTGRES_POOL_SIZE: 10
+      POSTGRES_MAX_OVERFLOW: 10
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_LLM_MODEL: llama3.2:3b
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+      OLLAMA_EMBEDDING_DIM: 768
+      OLLAMA_TIMEOUT_SECONDS: 120
+      TENANTRAG_DAILY_REQUEST_QUOTA: 10000
+      TENANTRAG_RATE_PER_SECOND: 5
+      TENANTRAG_RATE_BURST: 20
+      TENANTRAG_MAX_INFLIGHT: 4
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+volumes:
+  pg_data:
+  redis_data:
