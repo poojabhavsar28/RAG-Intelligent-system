@@ -51,6 +51,10 @@ services:
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text
       OLLAMA_EMBEDDING_DIM: 768
       OLLAMA_TIMEOUT_SECONDS: 120
+      TENANTRAG_DAILY_REQUEST_QUOTA: 10000
+      TENANTRAG_RATE_PER_SECOND: 5
+      TENANTRAG_RATE_BURST: 20
+      TENANTRAG_MAX_INFLIGHT: 4
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
