@@ -241,6 +241,16 @@ python scripts/provision_tenant.py --tenant-id acme --name "Acme"
 The command prints a high-entropy API key once. Store it in a secret manager. The API stores
 only its SHA-256 hash. Do not put the plaintext key in source code, logs or Git.
 
+
+If you are upgrading an already-initialized PostgreSQL volume from an earlier Compose
+configuration, the init script will not rerun automatically. After migration `pg0006`,
+create the runtime login once from the admin connection (use a strong password):
+
+```sql
+CREATE ROLE tenantrag_runtime_login LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '<RUNTIME_PASSWORD>';
+GRANT tenantrag_runtime TO tenantrag_runtime_login;
+```
+
 ### Ingest and ask
 
 Use the key in the `X-Tenant-API-Key` header. Example PowerShell requests:
