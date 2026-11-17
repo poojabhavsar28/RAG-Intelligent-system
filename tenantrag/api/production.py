@@ -305,12 +305,44 @@ def create_production_app(
                 p.tenant_id, body.external_id, body.title, body.content,
                 acl=policy, source_uri=body.source_uri,
                 language=body.language, trust_tier=body.trust_tier,
+                created_by=str(p.user_id) if p.user_id != 0 else "tenant-service",
             )
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=503, detail="Local Ollama embedding service is unavailable") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            release_slot(tag)
+
+    @app.delete("/v1/documents/{external_id}", status_code=204)
+    def delete_document(external_id: str, p: Principal = Depends(principal)):
+        tag = acquire_slot(p)
+        try:
+            with tenant_transaction(engine, p.tenant_id) as conn:
+                row = conn.execute(
+                    text(
+                        "SELECT created_by, legal_hold FROM documents "
+                        "WHERE tenant_id=:tenant AND external_id=:doc AND status='active' FOR UPDATE"
+                    ),
+                    {"tenant": p.tenant_id, "doc": external_id},
+                ).mappings().first()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Document not found")
+                if p.user_id != 0 and row["created_by"] != str(p.user_id):
+                    raise HTTPException(status_code=403, detail="Only the document owner may delete it")
+                if row["legal_hold"]:
+                    raise HTTPException(status_code=409, detail="Document is under legal hold")
+                conn.execute(
+                    text(
+                        "UPDATE documents SET status='deleted', deleted_at=now(), updated_at=now() "
+                        "WHERE tenant_id=:tenant AND external_id=:doc"
+                    ),
+                    {"tenant": p.tenant_id, "doc": external_id},
+                )
+            return Response(status_code=204)
         finally:
             release_slot(tag)
 
@@ -371,6 +403,8 @@ def create_production_app(
 
     @app.get("/v1/usage")
     def usage(p: Principal = Depends(principal)):
+        if p.user_id != 0:
+            raise HTTPException(status_code=403, detail="Tenant service key required for tenant-wide usage")
         with tenant_transaction(engine, p.tenant_id) as conn:
             row = conn.execute(
                 text(
