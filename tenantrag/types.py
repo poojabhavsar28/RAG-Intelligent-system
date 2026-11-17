@@ -15,8 +15,8 @@ from typing import Any, Mapping
 @dataclass(frozen=True, slots=True)
 class Principal:
     tenant_id: str
-    user_id: int
-    group_ids: tuple[int, ...] = ()
+    user_id: str | int
+    group_ids: tuple[str | int, ...] = ()
 
     def fingerprint(self) -> tuple:
         return (self.tenant_id, tuple(sorted(self.group_ids)))
@@ -25,9 +25,9 @@ class Principal:
 @dataclass(frozen=True, slots=True)
 class Acl:
     is_public: bool = False
-    allow_groups: frozenset[int] = frozenset()
-    allow_users: frozenset[int] = frozenset()
-    deny_groups: frozenset[int] = frozenset()
+    allow_groups: frozenset[str | int] = frozenset()
+    allow_users: frozenset[str | int] = frozenset()
+    deny_groups: frozenset[str | int] = frozenset()
     version: int = 1
 
     def permits(self, p: Principal) -> bool:
