@@ -29,6 +29,11 @@ def test_tenantrag_runtime_role_is_non_bypass_and_token_lookup_is_function_only(
                     'EXECUTE'
                 )
             """)).scalar_one()
+            assert conn.execute(text("""
+                SELECT has_table_privilege(
+                    'tenantrag_runtime', 'public.app_user_groups', 'SELECT'
+                )
+            """)).scalar_one()
             assert not conn.execute(text("""
                 SELECT has_table_privilege(
                     'tenantrag_runtime', 'public.auth_token_lookup', 'SELECT'
