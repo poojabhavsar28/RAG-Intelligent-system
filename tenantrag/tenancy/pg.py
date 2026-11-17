@@ -160,6 +160,7 @@ class PgTenantStore:
         max_chunk_tokens: int = 400,
         overlap: int = 60,
         trust_tier: int = 1,
+        created_by: str = "tenant-service",
     ) -> dict:
         """Atomically upsert one tenant document and its embedded chunks.
 
@@ -210,21 +211,43 @@ class PgTenantStore:
         ).bindparams(bindparam("emb", type_=Vector(768)))
 
         with tenant_transaction(self.engine, tenant_id) as conn:
+            existing = conn.execute(
+                text(
+                    "SELECT created_by, legal_hold FROM documents "
+                    "WHERE tenant_id=:t AND document_id=:d FOR UPDATE"
+                ),
+                {"t": tenant_id, "d": doc},
+            ).mappings().first()
+            if existing:
+                if existing["legal_hold"]:
+                    raise ValueError("document is under legal hold and cannot be replaced")
+                if created_by != "tenant-service" and existing["created_by"] != created_by:
+                    raise PermissionError("only the document owner or tenant service may replace this document")
+            duplicate = conn.execute(
+                text(
+                    "SELECT external_id FROM documents WHERE tenant_id=:t AND checksum=:checksum "
+                    "AND document_id<>:d LIMIT 1"
+                ),
+                {"t": tenant_id, "checksum": checksum, "d": doc},
+            ).scalar_one_or_none()
+            if duplicate:
+                raise ValueError(f"identical content already exists as document {duplicate!r}")
             conn.execute(
                 text(
                     "INSERT INTO documents (tenant_id, document_id, external_id, title, source_uri, "
-                    "checksum, language, status, trust_tier, injection_state) "
-                    "VALUES (:t, :d, :x, :title, :uri, :checksum, :lang, 'pending', :trust, :injection) "
+                    "checksum, language, status, trust_tier, injection_state, created_by) "
+                    "VALUES (:t, :d, :x, :title, :uri, :checksum, :lang, 'pending', :trust, :injection, :owner) "
                     "ON CONFLICT (tenant_id, document_id) DO UPDATE SET "
                     "external_id=EXCLUDED.external_id, title=EXCLUDED.title, source_uri=EXCLUDED.source_uri, "
                     "checksum=EXCLUDED.checksum, language=EXCLUDED.language, status='pending', "
                     "deleted_at=NULL, trust_tier=EXCLUDED.trust_tier, injection_state=EXCLUDED.injection_state, "
-                    "acl_version=documents.acl_version+1, updated_at=now()"
+                    "acl_version=documents.acl_version+1, updated_at=now() "
+                    "WHERE NOT documents.legal_hold"
                 ),
                 {
                     "t": tenant_id, "d": doc, "x": external_id, "title": title, "uri": source_uri,
                     "checksum": checksum, "lang": language, "trust": trust_tier,
-                    "injection": "suspect" if suspect else "clean",
+                    "injection": "suspect" if suspect else "clean", "owner": created_by,
                 },
             )
             conn.execute(
