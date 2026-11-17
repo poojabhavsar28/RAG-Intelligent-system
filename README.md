@@ -207,8 +207,9 @@ synthetic corpus or prints demo bearer tokens.
 
 ### Start locally with Docker Desktop
 
-1. Copy `.env.example` to `.env`. Set two different strong random values for
-   `POSTGRES_PASSWORD` and `POSTGRES_RUNTIME_PASSWORD`. Never commit `.env`.
+1. Copy `.env.example` to `.env`. Set three different strong, URL-safe random values
+   for `POSTGRES_PASSWORD`, `POSTGRES_RUNTIME_PASSWORD` and `REDIS_PASSWORD`
+   (hex strings from `openssl rand -hex 32` work). Never commit `.env`.
 2. Start Ollama on the Windows host and download the models:
 
    ```powershell
@@ -288,7 +289,8 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8100/v1/ask" -Headers $hea
 ```
 
 Available endpoints: `GET /livez`, `GET /healthz`, `POST /v1/documents`,
-`POST /v1/ask`, `POST /v1/feedback`, and `GET /v1/usage`.
+`DELETE /v1/documents/{external_id}`, `POST /v1/ask`, `POST /v1/feedback`,
+and `GET /v1/usage`. Text ingestion is supported; file parsing/OCR is not part of this API yet.
 
 **Authorization:** tenant service keys access documents granted to the `tenant_member` role.
 For user-specific access, provision user-bound keys and group membership using the admin-only
