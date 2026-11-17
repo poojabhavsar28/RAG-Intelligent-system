@@ -80,33 +80,75 @@ class HashingEmbedder:
 
 
 class OllamaEmbedder:
-    """Adapter for the existing Nomic/Ollama embedding setup (768-d)."""
+    """Direct Ollama /api/embed adapter; defaults to nomic-embed-text (768 dimensions)."""
 
-    def __init__(self, model: str = "nomic-embed-text", dim: int = 768, batch: int = 64):
-        from langchain_ollama import OllamaEmbeddings  # lazy: heavy optional dep
+    def __init__(
+        self,
+        model: str = "nomic-embed-text",
+        dim: int = 768,
+        batch: int = 64,
+        base_url: str = "http://localhost:11434",
+        timeout: float = 120.0,
+        client=None,
+    ):
+        import httpx
 
-        self._emb = OllamaEmbeddings(model=model)
+        if batch < 1:
+            raise ValueError("batch must be >= 1")
+        self.model = model
         self.dim = dim
         self._batch = batch
+        self.base_url = base_url.rstrip("/")
+        self._client = client or httpx.Client(timeout=timeout)
+        self._owns_client = client is None
 
     def embed(self, texts: Sequence[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
         rows: list[list[float]] = []
-        for i in range(0, len(texts), self._batch):  # embedding batching at ingestion
-            rows.extend(self._emb.embed_documents(list(texts[i : i + self._batch])))
+        for i in range(0, len(texts), self._batch):
+            response = self._client.post(
+                f"{self.base_url}/api/embed",
+                json={"model": self.model, "input": list(texts[i : i + self._batch])},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            batch_rows = payload.get("embeddings")
+            if not isinstance(batch_rows, list) or len(batch_rows) != len(texts[i : i + self._batch]):
+                raise RuntimeError("Ollama returned an invalid embedding batch")
+            rows.extend(batch_rows)
         arr = np.asarray(rows, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] != self.dim:
+            actual = arr.shape[1] if arr.ndim == 2 else "invalid"
+            raise ValueError(f"Ollama embedding dimension mismatch: expected {self.dim}, received {actual}")
+        if not np.isfinite(arr).all():
+            raise ValueError("Ollama returned non-finite embedding values")
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
         return arr / np.where(norms == 0, 1, norms)
 
     def embed_query(self, text: str) -> np.ndarray:
-        v = np.asarray(self._emb.embed_query(text), dtype=np.float32)
-        n = np.linalg.norm(v)
-        return v / n if n else v
+        return self.embed([text])[0]
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
 
 
-def chunk_by_tokens(text: str, max_tokens: int = 120, overlap: int = 20) -> list[str]:
-    """Simple whitespace-token chunker used by ingestion when no structure is known."""
-    words = text.split()
-    if len(words) <= max_tokens:
-        return [text.strip()] if text.strip() else []
-    step = max(1, max_tokens - overlap)
-    return [" ".join(words[i : i + max_tokens]) for i in range(0, len(words), step) if words[i : i + max_tokens]]
+def build_embedder(provider: str | None = None) -> Embedder:
+    """Build the configured embedder. Ollama is default; hashing is deterministic test-only."""
+    import os
+
+    selected = (provider or os.getenv("TENANTRAG_EMBEDDING_PROVIDER", "ollama")).strip().lower()
+    if selected == "ollama":
+        return OllamaEmbedder(
+            model=os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
+            dim=int(os.getenv("OLLAMA_EMBEDDING_DIM", "768")),
+            batch=int(os.getenv("OLLAMA_EMBEDDING_BATCH", "64")),
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+            timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")),
+        )
+    if selected == "hashing":
+        return HashingEmbedder(int(os.getenv("TENANTRAG_HASHING_DIM", "128")))
+    raise ValueError(
+        f"Unsupported TENANTRAG_EMBEDDING_PROVIDER: {selected!r}; use 'ollama' or 'hashing'"
+    )
