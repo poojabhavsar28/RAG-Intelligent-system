@@ -157,15 +157,15 @@ class PgTenantStore:
         acl: Acl | None = None,
         source_uri: str | None = None,
         language: str = "en",
-        max_chunk_tokens: int = 400,
-        overlap: int = 60,
+        max_chunk_words: int = 400,
+        overlap_words: int = 60,
         trust_tier: int = 1,
         created_by: str = "tenant-service",
     ) -> dict:
         """Atomically upsert one tenant document and its embedded chunks.
 
-        Chunk boundaries are whitespace-word based (not an exact model tokenizer). Embeddings
-        are computed before opening the database transaction. The document is
+        Chunk boundaries are whitespace-word based (not an exact model tokenizer).
+        Embeddings are computed before opening the database transaction. The document is
         visible only after every chunk and ACL row has been committed successfully.
         """
         if not tenant_id or not tenant_id.strip():
@@ -179,7 +179,7 @@ class PgTenantStore:
         if trust_tier not in (1, 2, 3):
             raise ValueError("trust_tier must be 1, 2 or 3")
 
-        parts = chunk_by_tokens(content, max_tokens=max_chunk_tokens, overlap=overlap)
+        parts = chunk_by_tokens(content, max_tokens=max_chunk_words, overlap=overlap_words)
         if not parts:
             raise ValueError("document has no indexable content")
         vectors = self.embedder.embed(parts)
