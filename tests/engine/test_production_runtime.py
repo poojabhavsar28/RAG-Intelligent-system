@@ -33,24 +33,60 @@ class FakeRedis:
         return None
 
 
-class FakeConnection:
-    def __init__(self, row):
+class FakeResult:
+    def __init__(self, row=None, scalar=None, values=None):
         self.row = row
+        self.scalar = scalar
+        self.values = values or []
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.row
+
+    def scalar_one_or_none(self):
+        return self.scalar
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.values
+
+
+class FakeConnection:
+    def __init__(self, row, user_exists=True, groups=()):
+        self.row = row
+        self.user_exists = user_exists
+        self.groups = list(groups)
         self.last_sql = None
         self.last_params = None
 
     def execute(self, statement, params):
         self.last_sql = str(statement)
         self.last_params = params
-        return SimpleNamespace(mappings=lambda: SimpleNamespace(first=lambda: self.row))
+        if "lookup_auth_token" in self.last_sql:
+            return FakeResult(row=self.row)
+        if "SELECT status FROM tenants" in self.last_sql:
+            return FakeResult(scalar="active")
+        if "FROM app_users" in self.last_sql:
+            return FakeResult(row={"user_id": params["user"]} if self.user_exists else None)
+        if "FROM app_user_groups" in self.last_sql:
+            return FakeResult(values=self.groups)
+        return FakeResult()
 
 
 class FakeEngine:
-    def __init__(self, row=None):
-        self.connection = FakeConnection(row)
+    def __init__(self, row=None, user_exists=True, groups=()):
+        self.connection = FakeConnection(row, user_exists=user_exists, groups=groups)
 
     @contextmanager
     def connect(self):
+        yield self.connection
+
+    @contextmanager
+    def begin(self):
         yield self.connection
 
 
@@ -81,6 +117,21 @@ def test_tenant_api_key_is_hashed_and_resolves_server_side_identity():
     assert engine.connection.last_params["token_hash"] == hashlib.sha256(raw_key.encode()).hexdigest()
     assert "lookup_auth_token" in engine.connection.last_sql
     assert raw_key not in engine.connection.last_sql
+
+
+def test_user_api_key_resolves_uuid_and_tenant_group_memberships():
+    import uuid
+
+    user_id = str(uuid.uuid4())
+    engine = FakeEngine(
+        {"tenant_id": "tenant-a", "subject_id": user_id},
+        user_exists=True,
+        groups=[17, 29],
+    )
+    principal = resolve_principal(engine, "tru_" + "u" * 48)
+    assert principal.tenant_id == "tenant-a"
+    assert principal.user_id == user_id
+    assert principal.group_ids == (17, 29)
 
 
 def test_invalid_tenant_key_is_rejected():
