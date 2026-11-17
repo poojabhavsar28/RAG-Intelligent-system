@@ -62,10 +62,12 @@ class FakeConnection:
         self.groups = list(groups)
         self.last_sql = None
         self.last_params = None
+        self.calls = []
 
     def execute(self, statement, params):
         self.last_sql = str(statement)
         self.last_params = params
+        self.calls.append((self.last_sql, params))
         if "lookup_auth_token" in self.last_sql:
             return FakeResult(row=self.row)
         if "SELECT status FROM tenants" in self.last_sql:
@@ -114,9 +116,10 @@ def test_tenant_api_key_is_hashed_and_resolves_server_side_identity():
     assert principal.tenant_id == "tenant-a"
     assert principal.user_id == 0
     assert principal.group_ids == ()
-    assert engine.connection.last_params["token_hash"] == hashlib.sha256(raw_key.encode()).hexdigest()
-    assert "lookup_auth_token" in engine.connection.last_sql
-    assert raw_key not in engine.connection.last_sql
+    auth_calls = [(sql, params) for sql, params in engine.connection.calls if "lookup_auth_token" in sql]
+    assert auth_calls
+    assert auth_calls[0][1]["token_hash"] == hashlib.sha256(raw_key.encode()).hexdigest()
+    assert raw_key not in auth_calls[0][0]
 
 
 def test_user_api_key_resolves_uuid_and_tenant_group_memberships():
