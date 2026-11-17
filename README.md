@@ -210,7 +210,11 @@ synthetic corpus or prints demo bearer tokens.
    ollama serve
    ollama pull llama3.2:3b
    ollama pull nomic-embed-text
+   python scripts/smoke_test_ollama.py
    ```
+
+   The smoke test performs real chat and embedding requests against Ollama; mocked CI tests
+   do not replace this local model check.
 
 3. Start the database, migrations, Redis and API:
 
