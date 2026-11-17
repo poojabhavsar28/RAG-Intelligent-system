@@ -43,19 +43,61 @@ class ExtractiveLLM:
         return f"{best} [{best_label}]"
 
 
-class GeminiLLM:
-    """Gemini via Vertex AI. Requires ``google-cloud-aiplatform`` and ADC credentials."""
+class OllamaLLM:
+    """Local Ollama chat completion adapter; no cloud credentials or paid API required."""
 
-    def __init__(self, model: str = "gemini-2.0-flash", project: str | None = None, location: str = "us-central1"):
-        import vertexai
-        from vertexai.generative_models import GenerativeModel
+    name = "ollama"
 
-        vertexai.init(project=project, location=location)
-        self._m = GenerativeModel(model)
-        self.name = model
+    def __init__(
+        self,
+        model: str = "llama3.2:3b",
+        base_url: str = "http://localhost:11434",
+        timeout: float = 120.0,
+        client=None,
+    ):
+        import httpx
+
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self._client = client or httpx.Client(timeout=timeout)
+        self._owns_client = client is None
 
     def complete(self, system: str, prompt: str) -> str:
-        from vertexai.generative_models import GenerationConfig
+        response = self._client.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+                "options": {"temperature": 0.0},
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        answer = payload.get("message", {}).get("content")
+        if not isinstance(answer, str) or not answer.strip():
+            raise RuntimeError("Ollama returned an empty or invalid chat response")
+        return answer.strip()
 
-        r = self._m.generate_content(f"{system}\n\n{prompt}", generation_config=GenerationConfig(temperature=0.0))
-        return r.text
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+
+def build_llm(provider: str | None = None) -> LLM:
+    """Build the configured provider. Ollama is the default; extractive is test-only."""
+    import os
+
+    selected = (provider or os.getenv("TENANTRAG_LLM_PROVIDER", "ollama")).strip().lower()
+    if selected == "ollama":
+        return OllamaLLM(
+            model=os.getenv("OLLAMA_LLM_MODEL", "llama3.2:3b"),
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+            timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")),
+        )
+    if selected == "extractive":
+        return ExtractiveLLM()
+    raise ValueError(f"Unsupported TENANTRAG_LLM_PROVIDER: {selected!r}; use 'ollama' or 'extractive'")
