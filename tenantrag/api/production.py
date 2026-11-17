@@ -96,7 +96,8 @@ class RedisGateway:
             f"trag:{{{tag}}}:inflight",
             self.rate_per_s, self.burst, self.max_inflight, self.daily_quota,
         )
-        return bool(int(result[0])), str(result[1]), int(result[2]), tag
+        reason = result[1].decode() if isinstance(result[1], bytes) else str(result[1])
+        return bool(int(result[0])), reason, int(result[2]), tag
 
     def release(self, tag: str) -> None:
         self.redis.eval(self._RELEASE, 1, f"trag:{{{tag}}}:inflight")
@@ -228,7 +229,10 @@ def create_production_app(
 
     @app.post("/v1/ask", response_model=AskOut)
     def ask(body: AskIn, p: Principal = Depends(principal)):
-        admitted, reason, retry_after, tag = gateway.admit(p.tenant_id)
+        try:
+            admitted, reason, retry_after, tag = gateway.admit(p.tenant_id)
+        except redis.RedisError as exc:
+            raise HTTPException(status_code=503, detail="Rate-limit service unavailable") from exc
         if not admitted:
             raise HTTPException(429, detail=reason, headers={"Retry-After": str(max(1, retry_after))})
         request_id = uuid.uuid4().hex
@@ -253,7 +257,12 @@ def create_production_app(
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=503, detail="Local Ollama inference is unavailable") from exc
         finally:
-            gateway.release(tag)
+            try:
+                gateway.release(tag)
+            except redis.RedisError:
+                # Redis failure is surfaced by readiness checks; do not mask a
+                # successful database/model response while releasing a slot.
+                pass
 
     @app.post("/v1/feedback", status_code=204)
     def feedback(body: FeedbackIn, p: Principal = Depends(principal)):
@@ -323,7 +332,25 @@ def build_app() -> FastAPI:
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")),
     )
-    return create_production_app(engine, redis_client, embedder, llm)
+    application = create_production_app(engine, redis_client, embedder, llm)
+
+    @application.on_event("shutdown")
+    def shutdown_runtime() -> None:
+        embedder.close()
+        llm.close()
+        redis_client.close()
+        engine.dispose()
+
+    return application
 
 
-app = build_app()
+if os.getenv("POSTGRES_DATABASE_URL"):
+    app = build_app()
+else:
+    app = FastAPI(title="TenantRAG Production API (unconfigured)")
+
+    @app.on_event("startup")
+    async def require_runtime_configuration() -> None:
+        raise RuntimeError(
+            "POSTGRES_DATABASE_URL is required; configure PostgreSQL, Redis and Ollama before startup"
+        )
