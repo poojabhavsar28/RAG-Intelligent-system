@@ -1,6 +1,6 @@
 """Production TenantRAG API.
 
-This module is intentionally separate from demo.py. It uses authenticated tenant
+This is the production entry point. It uses authenticated tenant
 API keys, PostgreSQL/pgvector persistence and ACL-filtered retrieval, Redis-backed
 admission control, durable feedback/usage records, and local Ollama inference.
 """

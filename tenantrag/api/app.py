@@ -5,8 +5,7 @@
   GET  /v2/usage     the caller's OWN tenant usage and cost
   GET  /healthz
 
-Identity comes from a ``PrincipalResolver`` dependency. ``static_token_resolver`` is for demos and
-tests; production wires the existing session/JWT auth (app/api/deps.py) so tenant_id and group
+Identity comes from a ``PrincipalResolver`` dependency. ``static_token_resolver`` is for tests only; production wires the existing session/JWT auth (app/api/deps.py) so tenant_id and group
 membership come from server-side identity and never from the request body.
 """
 from __future__ import annotations

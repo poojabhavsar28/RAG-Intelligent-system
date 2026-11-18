@@ -168,7 +168,6 @@ python bench/ablations.py                    # retrieval + self-check ablations
 python bench/cache_leak_ablation.py --check  # cache layer-ablation leak test
 python bench/noisy_neighbor.py               # noisy-neighbor experiment
 python bench/adaptation.py                   # per-tenant adaptation
-uvicorn tenantrag.api.demo:app --port 8100   # synthetic in-memory demo only; not production
 # For the persistent PostgreSQL + Redis + Ollama API, follow "Production runtime" below.
 ```
 CI (`.github/workflows/tenantrag.yml`) runs the tests, the quality gate (fails the PR on a quality regression or any leak) and the cache leak ablation. Latency is reported but never gated (shared runners are too noisy).
@@ -185,9 +184,8 @@ app/ main.py ...      legacy chatbot (kept)
 
 ## Production runtime (PostgreSQL + Redis + Ollama)
 
-The production entry point is **`tenantrag.api.production:app`**. It is separate from
-`tenantrag.api.demo:app`; Docker runs the production entry point and never creates a
-synthetic corpus or prints demo bearer tokens.
+The production entry point is **`tenantrag.api.production:app`**. Docker runs only this entry point;
+no synthetic corpus is created and no bearer tokens are printed.
 
 ### Runtime services
 

@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 from tenantrag.adaptation.tenant_reranker import AdaptiveReranker, Feedback, FeedbackStore
 from tenantrag.api.app import create_app, static_token_resolver
-from tenantrag.api.demo import build
 from tenantrag.corpus.simulator import build_corpus
 from tenantrag.gateway.limits import Gateway, TenantLimits
 from tenantrag.retrieval.hybrid import HybridRetriever
@@ -58,9 +57,32 @@ def test_adaptation_cold_start_keeps_shared_model_and_feedback_is_tenant_scoped(
     assert all(x.chunk.tenant_id == "tenant-0000" for x in h)
 
 
+def _build_test_app():
+    """In-memory /v2 app over a small synthetic corpus (test harness only)."""
+    from tenantrag.cache.backend import MemoryBackend
+    from tenantrag.cache.keys import KeyService
+    from tenantrag.cache.scoped import CacheConfig, TenantScopedCache
+    from tenantrag.doc_store import InMemoryDocStore
+    from tenantrag.pipeline.llm import ExtractiveLLM
+    from tenantrag.pipeline.orchestrator import RagPipeline
+    from tenantrag.retrieval.rerank import OverlapReranker
+
+    corpus = build_corpus(3, max_docs=12, queries_per_tenant=2, seed=1)
+    emb = HashingEmbedder(128)
+    router = TenantIndexRouter("dedicated", emb)
+    router.ingest(corpus.chunks)
+    docs = InMemoryDocStore.from_corpus(corpus)
+    cache = TenantScopedCache(MemoryBackend(), KeyService(), docs, emb, CacheConfig())
+    docs.subscribers.append(cache.on_doc_event)
+    retr = HybridRetriever(router, emb, reranker=OverlapReranker(), acl_authority=docs.authority)
+    pipe = RagPipeline(retr, ExtractiveLLM(), cache=cache)
+    tokens = {f"test-{t}": corpus.users[t][0] for t in corpus.tenants}
+    return create_app(pipe, Gateway(), static_token_resolver(tokens)), corpus
+
+
 @pytest.fixture(scope="module")
 def client():
-    app, corpus = build()
+    app, corpus = _build_test_app()
     return TestClient(app), corpus
 
 
@@ -73,8 +95,8 @@ def test_api_requires_auth(client):
 def test_api_answer_has_no_internal_fields_and_cache_is_invisible(client):
     c, corpus = client
     g = next(g for g in corpus.golden if g.kind == "answerable")
-    tok = {"Authorization": f"Bearer demo-{g.tenant_id}"}
-    # the demo token maps to the tenant's first user; make sure the doc is visible to that user
+    tok = {"Authorization": f"Bearer test-{g.tenant_id}"}
+    # the test token maps to the tenant's first user; make sure the doc is visible to that user
     u = corpus.users[g.tenant_id][0]
     d = next(d for d in corpus.docs.values() if d.tenant_id == g.tenant_id and d.acl.permits(u))
     q = f"What is the {d.attr} for {d.subject}?"
@@ -91,9 +113,9 @@ def test_api_tenant_cannot_see_other_tenants_content_or_usage(client):
     t0, t1 = list(corpus.tenants)[:2]
     d = next(d for d in corpus.docs.values() if d.tenant_id == t0 and d.acl.is_public)
     r = c.post("/v2/ask", json={"query": f"What is the {d.attr} for {d.subject}?"},
-               headers={"Authorization": f"Bearer demo-{t1}"})
+               headers={"Authorization": f"Bearer test-{t1}"})
     assert d.doc_id not in r.json()["citations"]
-    u = c.get("/v2/usage", headers={"Authorization": f"Bearer demo-{t1}"}).json()
+    u = c.get("/v2/usage", headers={"Authorization": f"Bearer test-{t1}"}).json()
     assert u["tenant_id"] == t1
 
 
@@ -128,7 +150,7 @@ def test_feedback_endpoint_stores_per_tenant_and_evicts_bad_cached_answer(client
     u = corpus.users[t][0]
     d = next(d for d in corpus.docs.values() if d.tenant_id == t and d.acl.permits(u))
     q = f"What is the {d.attr} for {d.subject}?"
-    h = {"Authorization": f"Bearer demo-{t}"}
+    h = {"Authorization": f"Bearer test-{t}"}
     c.post("/v2/ask", json={"query": q}, headers=h)
     assert c.post("/v2/feedback", json={"query": q, "document_id": d.doc_id, "signal": -1}, headers=h).status_code == 204
     assert c.get("/v2/usage", headers=h).json()["cache_hits"] == 0
